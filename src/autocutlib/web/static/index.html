@@ -83,9 +83,12 @@
     <h3>Voice</h3>
     <p class="muted small">Set a voice for a character in their box above to change it with ElevenLabs'
       voice changer (via fal.ai). Only the clips used in the cut are converted, about
-      <span id="voice-price"></span> per minute; results are cached.</p>
+      <span id="voice-price"></span> per minute; results are cached. All of a character's clips go
+      in one request with a fixed seed, so the voice stays consistent.</p>
     <div class="checks">
       <span id="fal-key"></span>
+      <label title="The same seed always gives the same rendition of a voice. Try another number if you don't like how it sounds.">Seed
+        <input type="number" id="opt-voice_seed" step="1" style="width: 6em"></label>
       <label title="Strip background noise before changing the voice"><input type="checkbox" id="opt-voice_denoise"> Remove background noise</label>
     </div>
     <datalist id="voice-list"></datalist>

@@ -273,7 +273,7 @@ function voiceRow(char, list) {
       btn.disabled = true;
       status.textContent = ' converting…';
       try {
-        const r = await api('/api/voice/preview', { method: 'POST', body: { path: list[0].path, voice: input.value.trim(), denoise: S.options.voice_denoise } });
+        const r = await api('/api/voice/preview', { method: 'POST', body: { path: list[0].path, voice: input.value.trim(), denoise: S.options.voice_denoise, seed: S.options.voice_seed } });
         status.textContent = '';
         audio.src = r.url;
         audio.hidden = false;
@@ -295,7 +295,7 @@ function voiceRow(char, list) {
 
 // ---------------------------------------------------------------- 3. options
 
-const NUM_OPTS = ['pre', 'post', 'merge_gap'];
+const NUM_OPTS = ['pre', 'post', 'merge_gap', 'voice_seed'];
 const BOOL_OPTS = ['no_merge', 'pick_best', 'enable_alts', 'retranscribe', 'convert', 'voice_denoise'];
 
 function initOptions() {

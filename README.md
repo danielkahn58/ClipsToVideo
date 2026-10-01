@@ -96,6 +96,7 @@ python autocut.py --script scene.pdf --pages 3-4 \
 | `--language` | en | |
 | `--retranscribe` | off | ignore cached `.words.json` transcripts |
 | `--voice NAME=VOICE` | — | change NAME's voice with ElevenLabs via fal.ai, e.g. `ARNOLD=Brian` (repeat per character) |
+| `--voice-seed` | 42 | voice changer seed: same seed = same rendition; try others to vary it |
 | `--voice-denoise` | off | have the voice changer strip background noise first |
 | `--no-convert` | off | don't convert files Resolve can't read |
 | `--convert-dir` | next to original | where ProRes conversions go |
@@ -143,10 +144,15 @@ still lines up.
    voices (Rachel, Aria, Brian, George, ...) or any voice ID that fal accepts. Leave it empty
    to keep the original voice.
 3. Click **▶ Preview** to hear about 8 seconds of the main take in that voice (about $0.04).
+   If you don't like that rendition, change **Seed** (Options › Voice) and preview again; the
+   cut uses the same seed, so it sounds like the preview.
 4. Build the cut as usual.
 
 What happens: after the cut is worked out, only the parts of that character's takes that the
-timeline uses (V1 clips and stacked alternates, plus 0.4 s either side) are sent to fal.
+timeline uses (V1 clips and stacked alternates, plus 0.4 s either side) are sent to fal, all in
+**one request per character** (joined with short silences, up to 4 minutes per request) with a
+**fixed seed**. Sending lines one by one makes the voice wander in pitch and timbre from clip
+to clip; one request keeps it consistent. The result is split back into clips.
 The converted audio replaces the original at the same position, and the video is copied
 unchanged into `<take>.<Voice>.mov` next to the take (or in the converted folder). The FCPXML
 and preview use that file. Transcription and alignment still use the original audio.
@@ -154,6 +160,9 @@ and preview use that file. Transcription and alignment still use the original au
 - **Cost:** fal charges $0.30 per minute of audio sent. The log shows each take's cost.
   Converted stretches are cached in `~/Library/Caches/autocut/voice`, so re-running the same cut,
   or a cut whose clips haven't moved, doesn't pay again.
+- **Still uneven?** The voice changer follows the actor's own intonation, so a delivery that
+  swings in pitch still will. Try another seed, or *Remove background noise* if the takes are
+  noisy (noise can make the conversion waver).
 - **Outside the clips**, the voiced take still has the original audio. If you extend a clip in
   Resolve past its padding, you'll hear the original voice there.
 - Only use a real person's voice with their permission; ElevenLabs' and fal's terms require it.

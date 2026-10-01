@@ -63,6 +63,9 @@ def parse_args(argv=None):
     p.add_argument("--voice", dest="voices", action="append", default=[], metavar="NAME=VOICE",
                    help="change NAME's voice with ElevenLabs via fal.ai (needs FAL_KEY), "
                         "e.g. ARNOLD=Brian or a voice ID; ~$0.30 per minute of used dialogue")
+    p.add_argument("--voice-seed", type=int, default=42,
+                   help="seed for the voice changer; the same seed gives the same rendition, "
+                        "try others if you don't like it (default 42)")
     p.add_argument("--voice-denoise", action="store_true",
                    help="have the voice changer remove background noise first")
     p.add_argument("--convert-dir", help="put ProRes conversions here (default: next to each original)")
@@ -97,7 +100,7 @@ def main(argv=None):
                        enable_alts=args.enable_alts, model=args.model, language=args.language,
                        retranscribe=args.retranscribe, convert=not args.no_convert,
                        convert_dir=args.convert_dir, voices=voices,
-                       voice_denoise=args.voice_denoise)
+                       voice_denoise=args.voice_denoise, voice_seed=args.voice_seed)
         run(args.script, videos, args.out, args.preview, opts)
     except AutocutError as e:
         sys.exit(str(e))

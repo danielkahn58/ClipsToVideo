@@ -133,12 +133,13 @@ def create_app(home):
                 except (ValueError, KeyError, IndexError, TypeError):
                     pass
                 break
-        wav = voice_preview(p, voice, start, 8.0, bool(b.get("denoise")))
+        seed = int(b["seed"]) if str(b.get("seed", "")).strip().lstrip("-").isdigit() else 42
+        wav = voice_preview(p, voice, start, 8.0, bool(b.get("denoise")), seed)
         return jsonify(url=f"/api/voice/audio/{wav.name}", start=start)
 
     @app.get("/api/voice/audio/<name>")
     def voice_audio(name):
-        if not re.fullmatch(r"[0-9a-f]{20}\.wav", name):
+        if not re.fullmatch(r"[0-9a-f]{20}-\d+\.wav", name):
             abort(404)
         return send_from_directory(voice_cache_dir(), name, mimetype="audio/wav")
 

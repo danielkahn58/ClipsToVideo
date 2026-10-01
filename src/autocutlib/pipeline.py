@@ -12,7 +12,7 @@ from .report import AutocutError, Reporter
 from .screenplay import load_dialogue
 from .text import fmt_tc
 from .transcribe import Transcriber, transcript_tokens
-from .voice import build_voiced_take, require_fal
+from .voice import DEFAULT_SEED, build_voiced_takes, require_fal
 
 LOW_MATCH = 0.6     # lines that matched fewer of their words than this get flagged
 
@@ -34,6 +34,7 @@ class Options:
     fallback_dir: str = None      # used if an original's folder isn't writable
     voices: dict = None           # {CHARACTER: ElevenLabs voice name or ID}, via fal.ai
     voice_denoise: bool = False   # ask the voice changer to strip background noise first
+    voice_seed: int = DEFAULT_SEED  # same seed -> same rendition of the voice; change to vary it
 
     @classmethod
     def from_dict(cls, d):
@@ -145,13 +146,15 @@ def apply_voices(segs, takes, opts, rep):
         voice = voices.get(char)
         if not voice:
             continue
-        for t in ts:
-            ranges = [(c.start, c.end) for s in segs for c in (s.primary, *s.alts) if c.take is t]
-            if not ranges:
-                continue
-            rep.stage(f"Changing voice: {t.label} -> {voice}")
-            path = build_voiced_take(t, ranges, voice, opts, rep)
-            t.path, t.info, t.voice = path, probe(path), voice
+        takes_ranges = [(t, [(c.start, c.end) for s in segs for c in (s.primary, *s.alts) if c.take is t])
+                        for t in ts]
+        takes_ranges = [(t, r) for t, r in takes_ranges if r]
+        if not takes_ranges:
+            continue
+        rep.stage(f"Changing voice: {char} -> {voice} ({len(takes_ranges)} take(s), seed {opts.voice_seed})")
+        paths = build_voiced_takes(takes_ranges, voice, opts, rep)
+        for t, _ in takes_ranges:
+            t.path, t.info, t.voice = paths[t.key], probe(paths[t.key]), voice
 
 
 def cut_table_text(segs):
