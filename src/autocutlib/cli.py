@@ -66,6 +66,9 @@ def parse_args(argv=None):
     p.add_argument("--voice-seed", type=int, default=42,
                    help="seed for the voice changer; the same seed gives the same rendition, "
                         "try others if you don't like it (default 42)")
+    p.add_argument("--voice-stability", type=float, metavar="PERCENT",
+                   help="voice changer stability, 0-100 (higher = steadier, flatter delivery); "
+                        "default: the voice's own setting, usually 50")
     p.add_argument("--voice-denoise", action="store_true",
                    help="have the voice changer remove background noise first")
     p.add_argument("--convert-dir", help="put ProRes conversions here (default: next to each original)")
@@ -88,6 +91,8 @@ def main(argv=None):
                 raise AutocutError(f"--video must look like NAME=path, got: {v}")
             videos.append(tuple(v.split("=", 1)))
 
+        if args.voice_stability is not None and not 0 <= args.voice_stability <= 100:
+            raise AutocutError("--voice-stability must be between 0 and 100")
         voices = {}
         for v in args.voices:
             if "=" not in v:
@@ -100,7 +105,8 @@ def main(argv=None):
                        enable_alts=args.enable_alts, model=args.model, language=args.language,
                        retranscribe=args.retranscribe, convert=not args.no_convert,
                        convert_dir=args.convert_dir, voices=voices,
-                       voice_denoise=args.voice_denoise, voice_seed=args.voice_seed)
+                       voice_denoise=args.voice_denoise, voice_seed=args.voice_seed,
+                       voice_stability=None if args.voice_stability is None else args.voice_stability / 100)
         run(args.script, videos, args.out, args.preview, opts)
     except AutocutError as e:
         sys.exit(str(e))

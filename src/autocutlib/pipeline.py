@@ -35,6 +35,7 @@ class Options:
     voices: dict = None           # {CHARACTER: ElevenLabs voice name or ID}, via fal.ai
     voice_denoise: bool = False   # ask the voice changer to strip background noise first
     voice_seed: int = DEFAULT_SEED  # same seed -> same rendition of the voice; change to vary it
+    voice_stability: float = None   # 0..1; None = the voice's own default (ElevenLabs: usually 0.5)
 
     @classmethod
     def from_dict(cls, d):
@@ -151,7 +152,8 @@ def apply_voices(segs, takes, opts, rep):
         takes_ranges = [(t, r) for t, r in takes_ranges if r]
         if not takes_ranges:
             continue
-        rep.stage(f"Changing voice: {char} -> {voice} ({len(takes_ranges)} take(s), seed {opts.voice_seed})")
+        rep.stage(f"Changing voice: {char} -> {voice} ({len(takes_ranges)} take(s), seed {opts.voice_seed}, "
+                  f"stability {'default' if opts.voice_stability is None else f'{opts.voice_stability:.0%}'})")
         paths = build_voiced_takes(takes_ranges, voice, opts, rep)
         for t, _ in takes_ranges:
             t.path, t.info, t.voice = paths[t.key], probe(paths[t.key]), voice

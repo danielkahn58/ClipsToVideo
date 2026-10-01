@@ -134,7 +134,9 @@ def create_app(home):
                     pass
                 break
         seed = int(b["seed"]) if str(b.get("seed", "")).strip().lstrip("-").isdigit() else 42
-        wav = voice_preview(p, voice, start, 8.0, bool(b.get("denoise")), seed)
+        stab = b.get("stability")
+        stab = min(max(float(stab), 0.0), 1.0) if isinstance(stab, (int, float)) else None
+        wav = voice_preview(p, voice, start, 8.0, bool(b.get("denoise")), seed, stability=stab)
         return jsonify(url=f"/api/voice/audio/{wav.name}", start=start)
 
     @app.get("/api/voice/audio/<name>")

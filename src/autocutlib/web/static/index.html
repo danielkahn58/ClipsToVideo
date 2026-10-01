@@ -89,6 +89,10 @@
       <span id="fal-key"></span>
       <label title="The same seed always gives the same rendition of a voice. Try another number if you don't like how it sounds.">Seed
         <input type="number" id="opt-voice_seed" step="1" style="width: 6em"></label>
+      <label title="Higher = steadier, more consistent voice but flatter delivery. Unticked = the voice's own default (usually 50%).">
+        <input type="checkbox" id="stab-on"> Stability
+        <input type="range" id="stab" min="0" max="100" step="5" style="width: 9em">
+        <output id="stab-val"></output></label>
       <label title="Strip background noise before changing the voice"><input type="checkbox" id="opt-voice_denoise"> Remove background noise</label>
     </div>
     <datalist id="voice-list"></datalist>

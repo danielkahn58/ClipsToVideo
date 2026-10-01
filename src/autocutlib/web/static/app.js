@@ -273,7 +273,7 @@ function voiceRow(char, list) {
       btn.disabled = true;
       status.textContent = ' converting…';
       try {
-        const r = await api('/api/voice/preview', { method: 'POST', body: { path: list[0].path, voice: input.value.trim(), denoise: S.options.voice_denoise, seed: S.options.voice_seed } });
+        const r = await api('/api/voice/preview', { method: 'POST', body: { path: list[0].path, voice: input.value.trim(), denoise: S.options.voice_denoise, seed: S.options.voice_seed, stability: S.options.voice_stability } });
         status.textContent = '';
         audio.src = r.url;
         audio.hidden = false;
@@ -307,6 +307,8 @@ function initOptions() {
   for (const k of NUM_OPTS) $(`#opt-${k}`).value = o[k];
   for (const k of BOOL_OPTS) $(`#opt-${k}`).checked = !!o[k];
   $('#opt-preview').checked = S.preview;
+  $('#stab-on').checked = o.voice_stability != null;
+  $('#stab').value = Math.round((o.voice_stability ?? 0.5) * 100);
   $('#opt-name').value = S.name || '';
   $('#conv-dir').textContent = CONFIG.converted;
   $('#voice-list').replaceChildren(...CONFIG.voices.map((v) => el('option', { value: v })));
@@ -319,6 +321,9 @@ function initOptions() {
     for (const k of NUM_OPTS) o[k] = parseFloat($(`#opt-${k}`).value) || 0;
     for (const k of BOOL_OPTS) o[k] = $(`#opt-${k}`).checked;
     S.preview = $('#opt-preview').checked;
+    $('#stab').disabled = !$('#stab-on').checked;
+    o.voice_stability = $('#stab-on').checked ? Number($('#stab').value) / 100 : null;
+    $('#stab-val').textContent = $('#stab-on').checked ? `${$('#stab').value}%` : 'default (≈50%)';
     S.name = $('#opt-name').value.trim();
     const where = document.querySelector('input[name=convwhere]:checked').value;
     const whereChanged = where !== S.convertWhere;

@@ -97,6 +97,7 @@ python autocut.py --script scene.pdf --pages 3-4 \
 | `--retranscribe` | off | ignore cached `.words.json` transcripts |
 | `--voice NAME=VOICE` | — | change NAME's voice with ElevenLabs via fal.ai, e.g. `ARNOLD=Brian` (repeat per character) |
 | `--voice-seed` | 42 | voice changer seed: same seed = same rendition; try others to vary it |
+| `--voice-stability` | voice's default (~50) | 0–100; higher = steadier, more consistent voice, flatter delivery |
 | `--voice-denoise` | off | have the voice changer strip background noise first |
 | `--no-convert` | off | don't convert files Resolve can't read |
 | `--convert-dir` | next to original | where ProRes conversions go |
@@ -160,8 +161,12 @@ and preview use that file. Transcription and alignment still use the original au
 - **Cost:** fal charges $0.30 per minute of audio sent. The log shows each take's cost.
   Converted stretches are cached in `~/Library/Caches/autocut/voice`, so re-running the same cut,
   or a cut whose clips haven't moved, doesn't pay again.
+- **Stability** (Options › Voice, tick it to override; `--voice-stability`): ElevenLabs'
+  stability setting, 0–100%. Unticked, the voice's own default is used (about 50% for the
+  standard voices). Higher is steadier and more consistent but flatter. If fal's endpoint
+  doesn't accept the setting, the run warns and continues with the default.
 - **Still uneven?** The voice changer follows the actor's own intonation, so a delivery that
-  swings in pitch still will. Try another seed, or *Remove background noise* if the takes are
+  swings in pitch still will. Raise stability, try another seed, or *Remove background noise* if the takes are
   noisy (noise can make the conversion waver).
 - **Outside the clips**, the voiced take still has the original audio. If you extend a clip in
   Resolve past its padding, you'll hear the original voice there.

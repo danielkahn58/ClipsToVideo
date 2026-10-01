@@ -57,7 +57,7 @@ def require_fal():
                            "export FAL_KEY=... before running.")
 
 
-def call_fal(audio_path, voice, denoise, rep, seed=DEFAULT_SEED):
+def call_fal(audio_path, voice, denoise, rep, seed=DEFAULT_SEED, stability=None):
     """Send one audio file through the voice changer; returns the URL of the result."""
     import fal_client
     url = fal_client.upload_file(audio_path)
@@ -71,8 +71,18 @@ def call_fal(audio_path, voice, denoise, rep, seed=DEFAULT_SEED):
     args = {"audio_url": url, "voice": voice, "remove_background_noise": bool(denoise)}
     if seed is not None:
         args["seed"] = int(seed)
+    if stability is not None:
+        args["stability"] = round(float(stability), 2)
     try:
-        result = fal_client.subscribe(FAL_APP, args, with_logs=True, on_queue_update=on_update)
+        try:
+            result = fal_client.subscribe(FAL_APP, args, with_logs=True, on_queue_update=on_update)
+        except fal_client.FalClientHTTPError as e:
+            if e.status_code != 422 or "stability" not in args:
+                raise
+            # The endpoint rejected the input; most likely it doesn't take `stability`.
+            rep.warn(f"fal.ai didn't accept a stability setting ({e}); using the voice's default.")
+            args.pop("stability")
+            result = fal_client.subscribe(FAL_APP, args, with_logs=True, on_queue_update=on_update)
     except Exception as e:  # noqa: BLE001 - surface fal's message (bad voice name, no credit...)
         raise AutocutError(f"fal.ai voice changer failed: {e}") from None
     audio = result.get("audio") if isinstance(result, dict) else None
@@ -129,11 +139,12 @@ def batches(items, limit=MAX_BATCH):
     return out
 
 
-def convert_batch(items, voice, denoise, seed, rep, caller=None):
+def convert_batch(items, voice, denoise, seed, rep, caller=None, stability=None):
     """Convert several stretches [(take_path, start, end)] in ONE request, so they all get the
     same rendition of the voice. Returns ([48 kHz mono WAV per stretch, each exactly its input
     length], seconds newly sent to the API)."""
-    sig = json.dumps([[_file_key(p), s, e] for p, s, e in items] + [voice, bool(denoise), seed])
+    sig = json.dumps([[_file_key(p), s, e] for p, s, e in items] + [voice, bool(denoise), seed]
+                     + ([stability] if stability is not None else []))
     key = hashlib.sha1(sig.encode()).hexdigest()[:20]
     outs = [cache_dir() / f"{key}-{i}.wav" for i in range(len(items))]
     if all(o.exists() for o in outs):
@@ -158,7 +169,7 @@ def convert_batch(items, voice, denoise, seed, rep, caller=None):
                 "preparing audio for the voice changer")
 
         raw = tmp / "out.raw"
-        urllib.request.urlretrieve((caller or call_fal)(src, voice, denoise, rep, seed), raw)
+        urllib.request.urlretrieve((caller or call_fal)(src, voice, denoise, rep, seed, stability=stability), raw)
         full = tmp / "out.wav"
         _ffmpeg(["-i", str(raw), "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(full)],
                 "decoding the converted audio")
@@ -210,7 +221,8 @@ def build_voiced_takes(takes_ranges, voice, opts, rep, caller=None):
         if len(groups) > 1:
             rep.log(f"  request {n}/{len(groups)} ({sum(e - s for _, s, e in group):.0f}s of audio)")
         rep.progress((n - 1) / len(groups), f"converting {n}/{len(groups)}")
-        got, new = convert_batch(group, voice, opts.voice_denoise, seed, rep, caller)
+        got, new = convert_batch(group, voice, opts.voice_denoise, seed, rep, caller,
+                                 stability=opts.voice_stability)
         wavs += got
         sent += new
     if sent:
@@ -272,12 +284,13 @@ def _mux(take, pieces, dst):
     tmp.replace(dst)
 
 
-def preview(take_path, voice, start, seconds, denoise, seed=DEFAULT_SEED, rep=None, caller=None):
+def preview(take_path, voice, start, seconds, denoise, seed=DEFAULT_SEED, rep=None, caller=None,
+            stability=None):
     """Convert a short stretch of a take, for auditioning a voice. Returns the WAV path."""
     from .media import probe
     rep = rep or Reporter()
     dur = probe(take_path)["duration"]
     start = max(0.0, min(start, max(dur - seconds, 0.0)))
     (wav,), _ = convert_batch([(Path(take_path), round(start, 3), round(min(start + seconds, dur), 3))],
-                              voice, denoise, seed, rep, caller)
+                              voice, denoise, seed, rep, caller, stability=stability)
     return wav

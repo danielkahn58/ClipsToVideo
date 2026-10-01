@@ -15,8 +15,8 @@ def test_merge_ranges_pads_joins_and_clamps():
 
 def silent_fal(calls):
     """Stand-in for the fal API: returns silence as long as the input, plus a bit (to test trimming)."""
-    def fake(src, voice_name, denoise, rep, seed):
-        calls.append((voice_name, seed))
+    def fake(src, voice_name, denoise, rep, seed, stability=None):
+        calls.append((voice_name, seed) if stability is None else (voice_name, seed, stability))
         out = src.with_name(src.stem + ".fake.mp3")
         dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                     "-of", "csv=p=0", str(src)], capture_output=True, text=True).stdout)
@@ -106,7 +106,7 @@ def test_split_back_stays_in_sync_when_api_stretches(tmp_path, monkeypatch):
                     "sine=frequency=500:duration=20:sample_rate=48000",
                     "-af", "volume='if(between(t,2,3)+between(t,12,13),1,0)':eval=frame", str(src)], check=True)
 
-    def stretching(path, voice_name, denoise, rep, seed):
+    def stretching(path, voice_name, denoise, rep, seed, stability=None):
         out = path.with_name("stretched.wav")
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-af", "atempo=0.97",
                         str(out)], check=True)
@@ -131,3 +131,55 @@ def test_voice_needs_key(monkeypatch):
     from autocutlib.report import AutocutError
     with pytest.raises(AutocutError, match="fal.ai API key"):
         voice.require_fal()
+
+
+class _FakeHTTPError(Exception):
+    def __init__(self, status_code, message):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def fake_fal_client(monkeypatch, reject_stability):
+    """A stand-in fal_client module recording what was sent to subscribe()."""
+    import types
+    sent = []
+
+    def subscribe(app, args, **kw):
+        sent.append(dict(args))
+        if reject_stability and "stability" in args:
+            raise _FakeHTTPError(422, "extra field: stability")
+        return {"audio": {"url": "https://example.invalid/out.mp3"}}
+
+    mod = types.SimpleNamespace(upload_file=lambda p: "https://example.invalid/in.wav",
+                                subscribe=subscribe, FalClientHTTPError=_FakeHTTPError)
+    monkeypatch.setitem(__import__("sys").modules, "fal_client", mod)
+    return sent
+
+
+def test_stability_is_sent(monkeypatch):
+    sent = fake_fal_client(monkeypatch, reject_stability=False)
+    voice.call_fal("x.wav", "Aria", False, voice.Reporter(), seed=3, stability=1.0)
+    assert sent == [{"audio_url": "https://example.invalid/in.wav", "voice": "Aria",
+                     "remove_background_noise": False, "seed": 3, "stability": 1.0}]
+    sent.clear()
+    voice.call_fal("x.wav", "Aria", False, voice.Reporter(), seed=3)
+    assert "stability" not in sent[0]
+
+
+def test_stability_rejected_falls_back(monkeypatch, capsys):
+    sent = fake_fal_client(monkeypatch, reject_stability=True)
+    url = voice.call_fal("x.wav", "Aria", False, voice.Reporter(), stability=0.9)
+    assert url.endswith("out.mp3")
+    assert "stability" in sent[0] and "stability" not in sent[1]
+    assert "didn't accept a stability" in capsys.readouterr().out
+
+
+@needs_ffmpeg
+def test_stability_changes_rendition(project, tmp_path, fake_fal):
+    from autocutlib.pipeline import Options, run
+    takes = [("MIKEY", project / "mikey.mov"), ("CLAIRE", project / "claire.mp4")]
+    opts = Options(convert_dir=str(tmp_path / "conv"), voices={"CLAIRE": "Aria"})
+    run(project / "scene.pdf", takes, tmp_path / "a.fcpxml", None, opts)
+    opts.voice_stability = 1.0
+    run(project / "scene.pdf", takes, tmp_path / "b.fcpxml", None, opts)
+    assert len(fake_fal) == 2          # new stability = new request, not the cached one
