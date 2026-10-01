@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+# Media and generated output don't belong in the repo
+*.mov
+*.mp4
+*.mpeg
+*.mpg
+*.mxf
+*.fcpxml
+*.words.json
+demo/

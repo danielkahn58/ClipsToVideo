@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>autocut</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>autocut</h1>
+  <span class="sub">screenplay + per-character takes &rarr; Resolve timeline</span>
+  <label class="recent">Past runs
+    <select id="recent"><option value="">—</option></select>
+  </label>
+</header>
+<div id="env-warnings"></div>
+
+<main>
+  <!-- 1. Screenplay -->
+  <section id="sec-script">
+    <h2><span class="step">1</span> Screenplay</h2>
+    <div class="row">
+      <input id="script-path" class="path" placeholder="/Users/you/Scripts/scene.pdf" spellcheck="false">
+      <span class="pickers" data-kind="pdf" data-target="script"></span>
+    </div>
+    <div class="row">
+      <label>Pages <input id="pages" placeholder="all, or 3-4 / 3,5-6" size="16"></label>
+      <button id="parse" class="primary">Parse dialogue</button>
+      <span id="script-status" class="muted"></span>
+    </div>
+    <div id="script-result" hidden>
+      <div id="char-chips" class="chips"></div>
+      <div class="table-wrap short"><table id="dialogue">
+        <thead><tr><th>#</th><th>Page</th><th>Character</th><th>Line</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <details><summary>Raw <code>--dump</code> output</summary><pre id="dump"></pre></details>
+    </div>
+  </section>
+
+  <!-- 2. Takes -->
+  <section id="sec-takes">
+    <h2><span class="step">2</span> Takes</h2>
+    <p class="muted">For each character, add the take(s) framed on them. The first take is the
+      main one and goes on V1; the others are stacked above it. Files are used where they are on
+      disk, not copied.</p>
+    <div id="takes"><p class="muted">Parse the screenplay first.</p></div>
+  </section>
+
+  <!-- 3. Options -->
+  <section id="sec-options">
+    <h2><span class="step">3</span> Options</h2>
+    <div class="grid">
+      <label>Whisper model
+        <input id="opt-model" list="models" spellcheck="false">
+        <datalist id="models"></datalist>
+      </label>
+      <label>Language <input id="opt-language" size="4"></label>
+      <label>Pre padding (s) <input id="opt-pre" type="number" step="0.05" min="0"></label>
+      <label>Post padding (s) <input id="opt-post" type="number" step="0.05" min="0"></label>
+      <label>Merge gap (s) <input id="opt-merge_gap" type="number" step="0.25" min="0"></label>
+      <label>Output name <input id="opt-name" placeholder="from the script" spellcheck="false"></label>
+    </div>
+    <div class="checks">
+      <label title="Cut every screenplay line separately, even when one character speaks several in a row">
+        <input type="checkbox" id="opt-no_merge"> No merge</label>
+      <label title="Per clip, put whichever take matched the screenplay best on V1 (otherwise always the main take)">
+        <input type="checkbox" id="opt-pick_best"> Pick best take</label>
+      <label title="Leave the stacked alternate takes enabled in Resolve (they're disabled by default)">
+        <input type="checkbox" id="opt-enable_alts"> Enable alternates</label>
+      <label><input type="checkbox" id="opt-preview"> Render preview MP4</label>
+      <label title="Ignore cached .words.json transcripts">
+        <input type="checkbox" id="opt-retranscribe"> Re-transcribe</label>
+      <label title="Files Resolve can't read (e.g. .mpeg with MP2 audio) are converted to ProRes .mov">
+        <input type="checkbox" id="opt-convert"> Convert for Resolve</label>
+    </div>
+    <div class="checks" id="convert-where">
+      <span class="muted">ProRes copies go</span>
+      <label><input type="radio" name="convwhere" value="next" checked> next to the originals</label>
+      <label><input type="radio" name="convwhere" value="workspace"> in <code id="conv-dir"></code></label>
+    </div>
+  </section>
+
+  <!-- 4. Run -->
+  <section id="sec-run">
+    <h2><span class="step">4</span> Run</h2>
+    <div class="row">
+      <button id="run" class="primary big">Build the cut</button>
+      <button id="cancel" hidden>Cancel</button>
+      <span id="run-status"></span>
+    </div>
+    <div id="progress-wrap" hidden>
+      <div id="stage"></div>
+      <div class="bar"><div id="bar"></div></div>
+    </div>
+    <details id="log-box"><summary>Log</summary>
+      <label class="muted small"><input type="checkbox" id="autoscroll" checked> follow</label>
+      <pre id="log"></pre>
+    </details>
+  </section>
+
+  <!-- 5. Result -->
+  <section id="sec-result" hidden>
+    <h2><span class="step">5</span> Result</h2>
+    <div id="result-summary"></div>
+    <div class="row">
+      <a id="dl-fcpxml" class="button primary" download>Download FCPXML</a>
+      <button id="reveal-fcpxml" hidden>Show in Finder</button>
+      <code id="fcpxml-path" class="small"></code>
+    </div>
+    <p class="muted small">In Resolve: File &rsaquo; Import &rsaquo; Timeline, then choose the file. The
+      timeline points at the media on disk, so keep the takes where they are.</p>
+    <div id="preview-box" hidden>
+      <video id="preview" controls preload="metadata"></video>
+      <div class="row"><a id="dl-preview" class="button" download>Download MP4</a>
+        <span class="muted small">Click a row below to jump to it.</span></div>
+    </div>
+    <div class="row">
+      <h3>Cut</h3>
+      <label class="small"><input type="checkbox" id="only-flagged"> only low matches</label>
+    </div>
+    <div class="table-wrap"><table id="cut">
+      <thead><tr><th>#</th><th>Character</th><th>Take</th><th>In</th><th>Out</th><th>Length</th>
+        <th>Match</th><th>Alternates</th><th>Lines</th><th>Text</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <div id="skipped"></div>
+    <div id="converted"></div>
+  </section>
+</main>
+
+<!-- In-browser file browser (fallback when there's no native dialog) -->
+<dialog id="browser">
+  <form method="dialog">
+    <div class="row"><input id="br-path" class="path" spellcheck="false"><button id="br-go" value="go">Go</button></div>
+    <ul id="br-list"></ul>
+    <div class="row end">
+      <span id="br-count" class="muted small"></span>
+      <button value="cancel">Cancel</button>
+      <button id="br-ok" value="ok" class="primary">Add selected</button>
+    </div>
+  </form>
+</dialog>
+
+<input type="file" id="upload-input" hidden>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

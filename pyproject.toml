@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autocut"
+version = "0.2.0"
+description = "Assemble a dialogue scene from per-character takes using the screenplay; writes FCPXML for DaVinci Resolve."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "pdfplumber>=0.10",
+    "flask>=3.0",
+]
+
+[project.optional-dependencies]
+# Transcription. Kept separate so the parser, UI and tests install in seconds.
+whisper = ["whisperx>=3.1"]
+dev = ["pytest>=8", "reportlab>=4", "ruff>=0.5"]
+
+[project.scripts]
+autocut = "autocutlib.cli:main"
+autocut-web = "autocutlib.web.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"autocutlib.web" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+
+[tool.ruff]
+line-length = 130
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+ignore = ["B905"]   # zip(a, a[1:]) pairs are deliberately unequal
