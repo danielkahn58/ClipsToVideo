@@ -12,6 +12,7 @@ from .report import AutocutError, Reporter
 from .screenplay import load_dialogue
 from .text import fmt_tc
 from .transcribe import Transcriber, transcript_tokens
+from .voice import build_voiced_take, require_fal
 
 LOW_MATCH = 0.6     # lines that matched fewer of their words than this get flagged
 
@@ -31,6 +32,8 @@ class Options:
     convert: bool = True          # convert files Resolve can't read to ProRes
     convert_dir: str = None       # None = next to each original
     fallback_dir: str = None      # used if an original's folder isn't writable
+    voices: dict = None           # {CHARACTER: ElevenLabs voice name or ID}, via fal.ai
+    voice_denoise: bool = False   # ask the voice changer to strip background noise first
 
     @classmethod
     def from_dict(cls, d):
@@ -114,6 +117,8 @@ def run(script, videos, out, preview=None, opts=None, reporter=None):
     for line in cut_table_text(segs):
         rep.log(line)
 
+    apply_voices(segs, takes, opts, rep)
+
     out = Path(out)
     total = write_fcpxml(segs, all_takes, out, out.stem, opts.enable_alts, rep)
     rep.log(f"\nWrote {out}: {len(segs)} clips, {fmt_tc(total)} long.")
@@ -124,6 +129,29 @@ def run(script, videos, out, preview=None, opts=None, reporter=None):
         render_preview(segs, all_takes[0].info, preview, rep)
 
     return result_dict(segs, all_takes, lines, out, preview, total, opts)
+
+
+def apply_voices(segs, takes, opts, rep):
+    """Swap in voice-changed copies of the takes of characters that have a voice set."""
+    voices = {k.strip().upper(): v.strip() for k, v in (opts.voices or {}).items() if v and v.strip()}
+    if not voices:
+        return
+    for char in sorted(set(voices) - set(takes)):
+        rep.warn(f"Voice set for {char}, but {char} has no takes; ignored.")
+    if not set(voices) & set(takes):
+        return
+    require_fal()
+    for char, ts in takes.items():
+        voice = voices.get(char)
+        if not voice:
+            continue
+        for t in ts:
+            ranges = [(c.start, c.end) for s in segs for c in (s.primary, *s.alts) if c.take is t]
+            if not ranges:
+                continue
+            rep.stage(f"Changing voice: {t.label} -> {voice}")
+            path = build_voiced_take(t, ranges, voice, opts, rep)
+            t.path, t.info, t.voice = path, probe(path), voice
 
 
 def cut_table_text(segs):
@@ -148,7 +176,7 @@ def result_dict(segs, takes, lines, out, preview, total, opts):
         "low_match": LOW_MATCH,
         "options": asdict(opts),
         "takes": [{"character": t.character, "take": t.index + 1, "source": str(t.source),
-                   "path": str(t.path), "converted": t.path != t.source,
+                   "path": str(t.path), "converted": t.path != t.source, "voice": t.voice,
                    "width": t.info["width"], "height": t.info["height"],
                    "fps": float(t.info["rate"]), "duration": t.info["duration"]} for t in takes],
         "segments": [{"n": n, "character": s.character, "lines": s.lines, "text": s.text,

@@ -39,6 +39,7 @@ const S = {
   script: '', pages: '', parsed: null,
   takes: {},            // CHARACTER -> [{ path, info?, error? }]
   options: {}, name: '', preview: true, convertWhere: 'next',
+  voices: {},           // CHARACTER -> ElevenLabs voice name/ID ('' = original voice)
 };
 
 function save() {
@@ -46,7 +47,7 @@ function save() {
     const takes = Object.fromEntries(Object.entries(S.takes).map(([c, ts]) => [c, ts.map((t) => t.path)]));
     localStorage.setItem(STORE_KEY, JSON.stringify({
       script: S.script, pages: S.pages, takes, options: S.options, name: S.name,
-      preview: S.preview, convertWhere: S.convertWhere, lastDir: S.lastDir,
+      preview: S.preview, convertWhere: S.convertWhere, lastDir: S.lastDir, voices: S.voices,
     }));
   } catch { /* private mode etc. */ }
 }
@@ -256,13 +257,46 @@ function charCard(char, nLines) {
         : el('span', { class: 'badge warn' }, 'not a speaker in this script — remove these takes'),
       !list.length && nLines ? el('span', { class: 'muted small' }, '· no takes: these lines will be dropped') : null),
     ...list.map((t, i) => takeRow(char, t, i, list)),
-    el('div', { class: 'row' }, pickerButtons('video', true, (paths) => addTakes(char, paths)), pathInput));
+    el('div', { class: 'row' }, pickerButtons('video', true, (paths) => addTakes(char, paths)), pathInput),
+    nLines ? voiceRow(char, list) : null);
+}
+
+function voiceRow(char, list) {
+  const input = el('input', { list: 'voice-list', value: S.voices?.[char] || '', placeholder: 'original voice', spellcheck: 'false', size: 22 });
+  const audio = el('audio', { controls: true, hidden: true });
+  const status = el('span', { class: 'muted small' });
+  const btn = el('button', {
+    type: 'button', title: `Converts ~8 seconds of the main take (about $${(CONFIG.voice_price * 8 / 60).toFixed(2)})`,
+    disabled: !input.value.trim() || !list.length,
+    onclick: async () => {
+      if (!CONFIG.fal_key) { alert('Set your fal.ai API key first (Options › Voice).'); return; }
+      btn.disabled = true;
+      status.textContent = ' converting…';
+      try {
+        const r = await api('/api/voice/preview', { method: 'POST', body: { path: list[0].path, voice: input.value.trim(), denoise: S.options.voice_denoise } });
+        status.textContent = '';
+        audio.src = r.url;
+        audio.hidden = false;
+        audio.play().catch(() => {});
+      } catch (e) {
+        status.replaceChildren(el('span', { class: 'error' }, e.message));
+      } finally { btn.disabled = false; }
+    },
+  }, '▶ Preview');
+  input.oninput = () => {
+    S.voices = { ...S.voices, [char]: input.value.trim() };
+    btn.disabled = !input.value.trim() || !list.length;
+    save();
+  };
+  return el('div', { class: 'row voice' },
+    el('label', {}, 'Voice ', input), btn, status, audio,
+    input.value.trim() ? el('span', { class: 'muted small' }, 'ElevenLabs via fal.ai') : null);
 }
 
 // ---------------------------------------------------------------- 3. options
 
 const NUM_OPTS = ['pre', 'post', 'merge_gap'];
-const BOOL_OPTS = ['no_merge', 'pick_best', 'enable_alts', 'retranscribe', 'convert'];
+const BOOL_OPTS = ['no_merge', 'pick_best', 'enable_alts', 'retranscribe', 'convert', 'voice_denoise'];
 
 function initOptions() {
   const d = CONFIG.defaults;
@@ -275,6 +309,9 @@ function initOptions() {
   $('#opt-preview').checked = S.preview;
   $('#opt-name').value = S.name || '';
   $('#conv-dir').textContent = CONFIG.converted;
+  $('#voice-list').replaceChildren(...CONFIG.voices.map((v) => el('option', { value: v })));
+  $('#voice-price').textContent = `$${CONFIG.voice_price.toFixed(2)}`;
+  renderFalKey();
   document.querySelector(`input[name=convwhere][value=${S.convertWhere}]`).checked = true;
   const sync = () => {
     o.model = $('#opt-model').value.trim() || d.model;
@@ -296,6 +333,23 @@ function initOptions() {
   sync();
 }
 
+function renderFalKey() {
+  const box = $('#fal-key');
+  if (CONFIG.fal_key_from_env) { box.replaceChildren(el('span', { class: 'badge ok' }, 'fal.ai key from FAL_KEY')); return; }
+  const input = el('input', { type: 'password', placeholder: 'fal.ai API key', size: 28, autocomplete: 'off' });
+  const saveKey = async (value) => {
+    try {
+      const r = await api('/api/settings', { method: 'POST', body: { fal_key: value } });
+      CONFIG.fal_key = r.fal_key;
+      renderFalKey();
+    } catch (e) { alert(e.message); }
+  };
+  box.replaceChildren(...(CONFIG.fal_key
+    ? [el('span', { class: 'badge ok' }, 'fal.ai key saved'), el('button', { type: 'button', onclick: () => saveKey('') }, 'Remove')]
+    : [input, el('button', { type: 'button', onclick: () => input.value.trim() && saveKey(input.value.trim()) }, 'Save key'),
+      el('a', { href: 'https://fal.ai/dashboard/keys', target: '_blank', class: 'small' }, 'get a key')]));
+}
+
 // ---------------------------------------------------------------- 4. run
 
 let source = null;
@@ -306,7 +360,9 @@ async function runJob() {
   const takes = Object.fromEntries(Object.entries(S.takes)
     .filter(([, ts]) => ts.length).map(([c, ts]) => [c, ts.map((t) => t.path)]));
   if (!Object.keys(takes).length) { alert('Add at least one take.'); return; }
-  const options = { ...S.options, convert_next_to_original: S.convertWhere === 'next' };
+  const voices = Object.fromEntries(Object.entries(S.voices || {}).filter(([c, v]) => v && takes[c]));
+  if (Object.keys(voices).length && !CONFIG.fal_key) { alert('A voice is set, but there is no fal.ai API key. Add it under Options › Voice.'); return; }
+  const options = { ...S.options, convert_next_to_original: S.convertWhere === 'next', voices };
   try {
     const job = await api('/api/jobs', {
       method: 'POST',
@@ -449,8 +505,9 @@ function showResult(r, jobId) {
   ] : []));
   const conv = r.takes.filter((t) => t.converted);
   $('#converted').replaceChildren(...(conv.length ? [
-    el('h3', {}, 'Converted for Resolve'),
-    el('ul', { class: 'small' }, ...conv.map((t) => el('li', {}, el('code', {}, basename(t.source)), ' → ', el('code', {}, t.path)))),
+    el('h3', {}, 'Converted files'),
+    el('ul', { class: 'small' }, ...conv.map((t) => el('li', {}, el('code', {}, basename(t.source)), ' → ', el('code', {}, t.path),
+      t.voice ? el('span', { class: 'badge' }, `voice: ${t.voice}`) : null))),
   ] : []));
 }
 

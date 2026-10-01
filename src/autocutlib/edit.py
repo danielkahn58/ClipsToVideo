@@ -14,6 +14,7 @@ class Take:
     path: Path            # the file the edit uses (the ProRes copy, if one was made)
     source: Path          # the file as given
     info: dict
+    voice: str = None     # set when the audio was voice-changed
 
     @property
     def key(self):

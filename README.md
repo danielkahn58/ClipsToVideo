@@ -6,7 +6,8 @@ You shoot the scene once (or more) framed on each character, with the other acto
 lines off camera. autocut reads the dialogue from the screenplay PDF, transcribes each take
 with WhisperX, aligns the screenplay against each transcript, and writes an **FCPXML timeline
 for DaVinci Resolve**: for every line, the clip from the take where that character is on
-screen. It can also render a quick MP4 preview.
+screen. It can also render a quick MP4 preview, and change a character's voice with ElevenLabs'
+voice changer (via fal.ai).
 
 There is a **local web UI** (`autocut-web`) and the original **command line** (`python autocut.py` / `autocut`).
 
@@ -54,7 +55,8 @@ autocut-web            # opens http://127.0.0.1:8765
    - **Upload…** copies the file into the workspace (`~/Movies/Autocut/uploads`). Use it
      only for files that aren't already on this Mac. The copy then becomes the file the
      timeline points to.
-3. **Options**: these are the same as the CLI flags (see below).
+3. **Options**: these are the same as the CLI flags (see below). For voices, see
+   [Changing a character's voice](#changing-a-characters-voice).
 4. **Build the cut** shows each stage, progress, and the full log. Runs happen in a
    background process, so you can cancel them. Reloading the page reconnects to a running job.
 5. **Result**: download the FCPXML (or *Show in Finder*), play or download the preview, and
@@ -93,6 +95,8 @@ python autocut.py --script scene.pdf --pages 3-4 \
 | `--model` | large-v3 | Whisper model: `large-v3`, `medium`, `small`, ... |
 | `--language` | en | |
 | `--retranscribe` | off | ignore cached `.words.json` transcripts |
+| `--voice NAME=VOICE` | — | change NAME's voice with ElevenLabs via fal.ai, e.g. `ARNOLD=Brian` (repeat per character) |
+| `--voice-denoise` | off | have the voice changer strip background noise first |
 | `--no-convert` | off | don't convert files Resolve can't read |
 | `--convert-dir` | next to original | where ProRes conversions go |
 
@@ -125,6 +129,35 @@ video and AAC or PCM audio. Anything else is converted automatically. For exampl
 - The transcript cache is shared: `take.mpeg.words.json` is reused for
   `take.prores.mov` (and the reverse), because the timing is identical.
 
+## Changing a character's voice
+
+autocut can replace a character's voice with an ElevenLabs voice using fal.ai's
+[ElevenLabs Voice Changer](https://fal.ai/models/fal-ai/elevenlabs/voice-changer). It's a voice
+*changer*, not text-to-speech: it keeps the actor's performance, timing, and delivery, so the cut
+still lines up.
+
+1. Get an API key at https://fal.ai/dashboard/keys. In the web UI, paste it under
+   **Options › Voice** and click *Save key* (it's stored in `~/Movies/Autocut/settings.json`,
+   readable only by you). On the command line, `export FAL_KEY=...` instead.
+2. In the character's box under **Takes**, type or pick a voice: one of ElevenLabs' standard
+   voices (Rachel, Aria, Brian, George, ...) or any voice ID that fal accepts. Leave it empty
+   to keep the original voice.
+3. Click **▶ Preview** to hear about 8 seconds of the main take in that voice (about $0.04).
+4. Build the cut as usual.
+
+What happens: after the cut is worked out, only the parts of that character's takes that the
+timeline uses (V1 clips and stacked alternates, plus 0.4 s either side) are sent to fal.
+The converted audio replaces the original at the same position, and the video is copied
+unchanged into `<take>.<Voice>.mov` next to the take (or in the converted folder). The FCPXML
+and preview use that file. Transcription and alignment still use the original audio.
+
+- **Cost:** fal charges $0.30 per minute of audio sent. The log shows each take's cost.
+  Converted stretches are cached in `~/Library/Caches/autocut/voice`, so re-running the same cut,
+  or a cut whose clips haven't moved, doesn't pay again.
+- **Outside the clips**, the voiced take still has the original audio. If you extend a clip in
+  Resolve past its padding, you'll hear the original voice there.
+- Only use a real person's voice with their permission; ElevenLabs' and fal's terms require it.
+
 ## Notes
 
 - The screenplay PDF needs selectable text, in standard screenplay format (character
@@ -147,5 +180,5 @@ python tests/fixtures.py demo   # a demo screenplay + takes + cached transcripts
 
 Layout: `src/autocutlib/` has `screenplay.py` (PDF → lines), `transcribe.py` (WhisperX +
 cache), `align.py`, `edit.py` (segments, takes, pick-best), `fcpxml.py`, `media.py`
-(ffprobe, conversion), `preview.py`, `pipeline.py` (the whole job, shared by the CLI and the
+(ffprobe, conversion), `preview.py`, `voice.py` (fal.ai voice changer), `pipeline.py` (the whole job, shared by the CLI and the
 web worker), and `cli.py`. `web/` has the Flask server, the job worker, and static files.

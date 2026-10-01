@@ -28,6 +28,9 @@ from ..pipeline import Options
 from ..report import AutocutError
 from ..screenplay import characters, dump_text, load_dialogue
 from ..transcribe import cache_path
+from ..voice import PRICE_PER_MIN, VOICES
+from ..voice import cache_dir as voice_cache_dir
+from ..voice import preview as voice_preview
 from .worker import EVENT_MARK
 
 STATIC = Path(__file__).parent / "static"
@@ -46,7 +49,8 @@ def create_app(home):
         d.mkdir(parents=True, exist_ok=True)
 
     app = Flask(__name__, static_folder=None)
-    jobs = JobStore(jobs_dir)
+    settings = Settings(home / "settings.json")
+    jobs = JobStore(jobs_dir, settings)
 
     # ------------------------------------------------------------------ guard
     # The server can read and list local files, so only answer this machine's own pages:
@@ -58,9 +62,9 @@ def create_app(home):
         host = m.group(1) if m else ""
         if host not in ("127.0.0.1", "localhost", "[::1]"):
             abort(403)
-        open_paths = ("/api/jobs/" in request.path
-                      and request.method == "GET"
-                      and (request.path.endswith("/events") or "/file/" in request.path))
+        open_paths = request.method == "GET" and (
+            ("/api/jobs/" in request.path and (request.path.endswith("/events") or "/file/" in request.path))
+            or request.path.startswith("/api/voice/audio/"))
         if request.path.startswith("/api/") and not open_paths and request.headers.get("X-Autocut") != "1":
             abort(403)
 
@@ -96,7 +100,47 @@ def create_app(home):
             ffmpeg=shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None,
             whisperx=importlib.util.find_spec("whisperx") is not None,
             models=MODELS, defaults=Options().__dict__, user_home=str(Path.home()),
+            voices=VOICES, voice_price=PRICE_PER_MIN, fal_key=settings.fal_key() is not None,
+            fal_key_from_env="FAL_KEY" in os.environ,
         )
+
+    @app.post("/api/settings")
+    def save_settings():
+        b = body()
+        if "fal_key" in b:
+            settings.set("fal_key", (b["fal_key"] or "").strip() or None)
+        return jsonify(fal_key=settings.fal_key() is not None)
+
+    # ------------------------------------------------------------------ voice
+    @app.post("/api/voice/preview")
+    def preview_voice():
+        b = body()
+        p = existing(b.get("path"), "Video")
+        voice = (b.get("voice") or "").strip()
+        if not voice:
+            raise AutocutError("Pick a voice first.")
+        key = settings.fal_key()
+        if not key:
+            raise AutocutError("Set your fal.ai API key first (Options > Voice).")
+        os.environ.setdefault("FAL_KEY", key)
+        # Start just before the first word heard in the take, if it's been transcribed.
+        start = 0.0
+        for c in (cache_path(p), cache_path(converted_path(p))):
+            if c.exists():
+                try:
+                    words = json.loads(c.read_text())
+                    start = max(0.0, float(words[0]["start"]) - 0.3) if words else 0.0
+                except (ValueError, KeyError, IndexError, TypeError):
+                    pass
+                break
+        wav = voice_preview(p, voice, start, 8.0, bool(b.get("denoise")))
+        return jsonify(url=f"/api/voice/audio/{wav.name}", start=start)
+
+    @app.get("/api/voice/audio/<name>")
+    def voice_audio(name):
+        if not re.fullmatch(r"[0-9a-f]{20}\.wav", name):
+            abort(404)
+        return send_from_directory(voice_cache_dir(), name, mimetype="audio/wav")
 
     # ------------------------------------------------------------------ files
     @app.post("/api/pick")
@@ -308,6 +352,7 @@ class Job:
         self.proc = None
         self.cond = threading.Condition()
         self._cancelled = False
+        self.settings = None
         if self.state.get("status") in ("running", "starting"):      # server restarted mid-job
             self.state["status"] = "interrupted"
             self._save_state()
@@ -344,7 +389,8 @@ class Job:
     def start(self):
         self.state.update(status="running", created=self.state.get("created") or time.time())
         self._save_state()
-        env = {**os.environ, "PYTHONUNBUFFERED": "1",
+        key = self.settings.fal_key() if self.settings else None
+        env = {**({"FAL_KEY": key} if key else {}), **os.environ, "PYTHONUNBUFFERED": "1",
                "PYTHONPATH": os.pathsep.join(filter(None, [str(SRC_ROOT), os.environ.get("PYTHONPATH")]))}
         self.proc = subprocess.Popen(
             [sys.executable, "-m", "autocutlib.web.worker", str(self.dir)],
@@ -424,9 +470,35 @@ class Job:
         threading.Thread(target=hard_kill, daemon=True).start()
 
 
+class Settings:
+    """Small JSON settings file in the workspace (the fal.ai key), readable only by you."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+    def _read(self):
+        try:
+            return json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return {}
+
+    def set(self, k, v):
+        d = self._read()
+        if v is None:
+            d.pop(k, None)
+        else:
+            d[k] = v
+        self.path.write_text(json.dumps(d))
+        os.chmod(self.path, 0o600)
+
+    def fal_key(self):
+        return os.environ.get("FAL_KEY") or self._read().get("fal_key")
+
+
 class JobStore:
-    def __init__(self, root):
+    def __init__(self, root, settings=None):
         self.root = Path(root)
+        self.settings = settings
         self.jobs = {}
         self.lock = threading.Lock()
         for d in self.root.iterdir():
@@ -458,6 +530,7 @@ class JobStore:
                    "preview": str(job_dir / f"{name}_preview.mp4") if preview else None}
             (job_dir / "job.json").write_text(json.dumps(cfg, indent=1))
             job = Job(job_dir)
+            job.settings = self.settings
             job.state = {"status": "starting", "created": time.time()}
             self.jobs[job.id] = job
         job.start()

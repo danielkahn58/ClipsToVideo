@@ -11,6 +11,7 @@ requires-python = ">=3.10,<3.13"
 dependencies = [
     "pdfplumber>=0.10",
     "flask>=3.0",
+    "fal-client>=0.5",     # ElevenLabs voice changer via fal.ai
 ]
 
 [project.optional-dependencies]

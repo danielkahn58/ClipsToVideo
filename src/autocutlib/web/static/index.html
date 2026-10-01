@@ -80,6 +80,15 @@
       <label><input type="radio" name="convwhere" value="next" checked> next to the originals</label>
       <label><input type="radio" name="convwhere" value="workspace"> in <code id="conv-dir"></code></label>
     </div>
+    <h3>Voice</h3>
+    <p class="muted small">Set a voice for a character in their box above to change it with ElevenLabs'
+      voice changer (via fal.ai). Only the clips used in the cut are converted, about
+      <span id="voice-price"></span> per minute; results are cached.</p>
+    <div class="checks">
+      <span id="fal-key"></span>
+      <label title="Strip background noise before changing the voice"><input type="checkbox" id="opt-voice_denoise"> Remove background noise</label>
+    </div>
+    <datalist id="voice-list"></datalist>
   </section>
 
   <!-- 4. Run -->

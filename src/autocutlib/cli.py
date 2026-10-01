@@ -14,6 +14,7 @@ reading their lines off camera. This:
 Give --video more than once for the same character to add alternate takes. The first
 one is the main take (V1); the others are stacked above it as disabled clips.
 Files Resolve can't read (e.g. .mpeg with MP2 audio) are converted to ProRes .mov.
+--voice NAME=VOICE changes a character's voice with ElevenLabs via fal.ai (set FAL_KEY).
 
 Example:
   python autocut.py --script scene.pdf --pages 3-4 \\
@@ -59,6 +60,11 @@ def parse_args(argv=None):
     p.add_argument("--retranscribe", action="store_true", help="ignore cached transcripts")
     p.add_argument("--no-convert", action="store_true",
                    help="don't convert files Resolve can't read to ProRes")
+    p.add_argument("--voice", dest="voices", action="append", default=[], metavar="NAME=VOICE",
+                   help="change NAME's voice with ElevenLabs via fal.ai (needs FAL_KEY), "
+                        "e.g. ARNOLD=Brian or a voice ID; ~$0.30 per minute of used dialogue")
+    p.add_argument("--voice-denoise", action="store_true",
+                   help="have the voice changer remove background noise first")
     p.add_argument("--convert-dir", help="put ProRes conversions here (default: next to each original)")
     return p.parse_args(argv)
 
@@ -79,11 +85,19 @@ def main(argv=None):
                 raise AutocutError(f"--video must look like NAME=path, got: {v}")
             videos.append(tuple(v.split("=", 1)))
 
+        voices = {}
+        for v in args.voices:
+            if "=" not in v:
+                raise AutocutError(f"--voice must look like NAME=VOICE, got: {v}")
+            name, voice = v.split("=", 1)
+            voices[name.strip().upper()] = voice.strip()
+
         opts = Options(pages=args.pages, pre=args.pre, post=args.post, merge_gap=args.merge_gap,
                        no_merge=args.no_merge, pick_best=args.pick_best,
                        enable_alts=args.enable_alts, model=args.model, language=args.language,
                        retranscribe=args.retranscribe, convert=not args.no_convert,
-                       convert_dir=args.convert_dir)
+                       convert_dir=args.convert_dir, voices=voices,
+                       voice_denoise=args.voice_denoise)
         run(args.script, videos, args.out, args.preview, opts)
     except AutocutError as e:
         sys.exit(str(e))
