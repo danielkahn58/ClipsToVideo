@@ -458,6 +458,11 @@ class Job:
             return
         self._cancelled = True
         self._add({"type": "log", "text": "Cancelling..."})
+        if os.name == "nt":
+            # No process groups on Windows: kill the worker and its ffmpeg children as a tree.
+            subprocess.run(["taskkill", "/PID", str(self.proc.pid), "/T", "/F"],
+                           capture_output=True, check=False)
+            return
         try:
             os.killpg(self.proc.pid, signal.SIGTERM)       # the worker and its ffmpeg children
         except ProcessLookupError:

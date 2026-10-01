@@ -39,6 +39,30 @@ The first transcription downloads the Whisper model (`large-v3` is about 3 GB). 
 runs on the CPU (WhisperX can't use Apple's GPU) and takes a few minutes per take.
 Results are cached next to each video as `<file>.words.json`, so later runs skip it.
 
+## Setup (Windows)
+
+In **Command Prompt** (cmd):
+
+```bat
+:: 1. Tools (close and reopen Command Prompt afterwards so they're on PATH)
+winget install -e --id Python.Python.3.11
+winget install -e --id Gyan.FFmpeg
+
+:: 2. In the project folder
+cd %USERPROFILE%\Downloads\ClipsToVideo
+py -3.11 -m venv .venv
+.venv\Scripts\activate
+python -m pip install --upgrade pip
+pip install -e ".[whisper]"
+
+:: 3. Run
+autocut-web
+```
+
+Next time: `cd` to the folder, `.venv\Scripts\activate`, `autocut-web`. On Windows there's no
+native file dialog: use **Browse…** or paste a path (Shift+right-click a file in Explorer >
+*Copy as path*). Workspace: `%USERPROFILE%\Movies\Autocut`.
+
 ## Web UI
 
 ```bash

@@ -28,8 +28,13 @@ async function api(path, { method = 'GET', body, query } = {}) {
 const tc = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${(s % 60).toFixed(2).padStart(5, '0')}`;
 const pct = (r) => `${Math.round(r * 100)}%`;
 const size = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${(b / 1e6).toFixed(0)} MB` : `${Math.ceil(b / 1e3)} KB`);
-const basename = (p) => p.split('/').pop();
-const dirname = (p) => p.split('/').slice(0, -1).join('/') || '/';
+// Paths may be POSIX (/Users/me/a.mov) or Windows (C:\Users\me\a.mov).
+const basename = (p) => p.split(/[\\/]/).pop();
+const dirname = (p) => {
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  return i > 0 ? p.slice(0, i) : (p[0] === '/' ? '/' : p);
+};
+const joinPath = (dir, name) => (dir.includes('\\') && !dir.includes('/') ? `${dir.replace(/\\$/, '')}\\${name}` : `${dir.replace(/\/$/, '')}/${name}`);
 
 // ---------------------------------------------------------------- state
 
@@ -122,10 +127,10 @@ function browseFiles(kind, multiple) {
       const d = await api('/api/fs', { query: { path: path || '', kind } });
       cur = d.path; pathInput.value = d.path; selected = new Set(); list.replaceChildren();
       if (d.parent) list.append(el('li', { class: 'dir', onclick: () => load(d.parent) }, '..'));
-      for (const name of d.dirs) list.append(el('li', { class: 'dir', onclick: () => load(`${cur}/${name}`) }, name));
+      for (const name of d.dirs) list.append(el('li', { class: 'dir', onclick: () => load(joinPath(cur, name)) }, name));
       for (const f of d.files) {
         const li = el('li', { class: 'file' }, f.name, el('span', { class: 'size' }, size(f.size)));
-        const full = `${cur}/${f.name}`;
+        const full = joinPath(cur, f.name);
         li.onclick = () => {
           if (!multiple) { selected.clear(); list.querySelectorAll('.sel').forEach((x) => x.classList.remove('sel')); }
           if (selected.has(full)) { selected.delete(full); li.classList.remove('sel'); } else { selected.add(full); li.classList.add('sel'); }
