@@ -34,6 +34,7 @@ const dirname = (p) => {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
   return i > 0 ? p.slice(0, i) : (p[0] === '/' ? '/' : p);
 };
+const takeName = (t) => (t.ref ? t.ref.name : basename(t.path));
 const joinPath = (dir, name) => (dir.includes('\\') && !dir.includes('/') ? `${dir.replace(/\\$/, '')}\\${name}` : `${dir.replace(/\/$/, '')}/${name}`);
 
 // ---------------------------------------------------------------- state
@@ -42,12 +43,15 @@ const STORE_KEY = 'autocut.v1';
 let CONFIG = {};
 const S = {
   script: '', pages: '', parsed: null,
-  takes: {},            // CHARACTER -> [{ path, info?, error? }]
+  takes: {},            // CHARACTER -> [{ path?, ref?, info?, error?, uploading? }]
+  project: null,        // { id, name, modified, local_dir } when a Google Drive project is open
+  scriptRef: null,      // project mode: the screenplay's Drive file
   options: {}, name: '', preview: true, convertWhere: 'next',
   voices: {},           // CHARACTER -> ElevenLabs voice name/ID ('' = original voice)
 };
 
 function save() {
+  if (S.project) { scheduleProjectSave(); saveLocalPrefs(); return; }
   try {
     const takes = Object.fromEntries(Object.entries(S.takes).map(([c, ts]) => [c, ts.map((t) => t.path)]));
     localStorage.setItem(STORE_KEY, JSON.stringify({
@@ -55,6 +59,14 @@ function save() {
       preview: S.preview, convertWhere: S.convertWhere, lastDir: S.lastDir, voices: S.voices,
     }));
   } catch { /* private mode etc. */ }
+}
+
+function saveLocalPrefs() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+    localStorage.setItem(STORE_KEY, JSON.stringify({ ...d, lastDir: S.lastDir, convertWhere: S.convertWhere,
+      lastProject: S.project ? S.project.id : null }));
+  } catch { /* ignore */ }
 }
 
 function restore() {
@@ -161,14 +173,17 @@ function browseFiles(kind, multiple) {
 // ---------------------------------------------------------------- 1. screenplay
 
 async function parseScript() {
-  S.script = $('#script-path').value.trim();
   S.pages = $('#pages').value.trim();
+  if (!S.project) S.script = $('#script-path').value.trim();
   save();
   const status = $('#script-status');
-  if (!S.script) { status.textContent = 'Choose a PDF first.'; return; }
+  if (S.project ? !S.scriptRef : !S.script) { status.textContent = 'Choose a PDF first.'; return; }
   status.textContent = 'Parsing…';
   try {
-    S.parsed = await api('/api/script/parse', { method: 'POST', body: { path: S.script, pages: S.pages } });
+    if (S.project) await flushProjectSave();
+    S.parsed = S.project
+      ? await api(`/api/projects/${S.project.id}/parse`, { method: 'POST', body: { pages: S.pages } })
+      : await api('/api/script/parse', { method: 'POST', body: { path: S.script, pages: S.pages } });
     status.textContent = '';
     renderScript();
     renderTakes();
@@ -190,12 +205,13 @@ function renderScript() {
     el('td', { class: 'num' }, ln.n), el('td', { class: 'num' }, ln.page),
     el('td', {}, ln.character), el('td', {}, ln.text))));
   $('#dump').textContent = p.dump;
-  if (!$('#opt-name').value) $('#opt-name').placeholder = basename(S.script).replace(/\.pdf$/i, '');
+  if (!$('#opt-name').value) $('#opt-name').placeholder = S.project ? S.project.name : basename(S.script).replace(/\.pdf$/i, '');
 }
 
 // ---------------------------------------------------------------- 2. takes
 
 async function addTakes(char, paths) {
+  if (S.project) { addProjectTakes(char, paths); return; }
   const list = (S.takes[char] ||= []);
   for (const path of paths) {
     if (list.some((t) => t.path === path)) continue;
@@ -207,8 +223,11 @@ async function addTakes(char, paths) {
 }
 
 async function probeTake(t) {
+  if (t.uploading != null) return;
   try {
-    t.info = await api('/api/probe', { method: 'POST', body: { path: t.path, convert_next_to_original: S.convertWhere === 'next' } });
+    t.info = t.ref
+      ? await api(`/api/projects/${S.project.id}/probe`, { method: 'POST', body: { ref: t.ref } })
+      : await api('/api/probe', { method: 'POST', body: { path: t.path, convert_next_to_original: S.convertWhere === 'next' } });
     t.error = null;
   } catch (e) { t.error = e.message; }
   renderTakes();
@@ -216,11 +235,14 @@ async function probeTake(t) {
 
 function takeRow(char, t, i, list) {
   const info = t.info;
-  const meta = info
-    ? `${info.width}×${info.height} · ${info.fps.toFixed(3).replace(/\.?0+$/, '')} fps · ${tc(info.duration)} · ${info.vcodec}${info.acodec ? '/' + info.acodec : ', no audio'} · ${size(info.size)}`
-    : t.error ? '' : 'checking…';
+  const meta = t.uploading != null ? `uploading to Google Drive… ${pct(t.uploading)}`
+    : info && info.local === false ? `${size(info.size)} · in Drive, not on this computer yet (downloaded when you build the cut)`
+      : info
+        ? `${info.width}×${info.height} · ${info.fps.toFixed(3).replace(/\.?0+$/, '')} fps · ${tc(info.duration)} · ${info.vcodec}${info.acodec ? '/' + info.acodec : ', no audio'} · ${size(info.size)}`
+        : t.error ? '' : 'checking…';
   const badges = [];
-  if (info?.problems.length) {
+  if (t.ref) badges.push(el('span', { class: 'badge drive', title: 'Saved in the project in Google Drive' }, 'in Drive'));
+  if (info?.problems?.length) {
     badges.push(el('span', { class: 'badge warn', title: `Resolve can't use: ${info.problems.join(', ')}.\nWill be converted to ${info.converted}` },
       info.converted_exists ? 'ProRes copy ready' : '→ ProRes'));
   }
@@ -229,14 +251,15 @@ function takeRow(char, t, i, list) {
   return el('div', { class: 'take' },
     el('div', { class: 'take-order' }, el('span', { class: i === 0 ? 'badge main' : 'badge' }, i === 0 ? 'Main' : `Alt ${i + 1}`)),
     el('div', {},
-      el('div', {}, el('span', { class: 'name' }, basename(t.path)), ...badges),
+      el('div', {}, el('span', { class: 'name' }, takeName(t)), ...badges),
       el('div', { class: 'meta' }, meta),
+      t.uploading != null ? el('div', { class: 'progress' }, el('div', { style: `width:${pct(t.uploading)}` })) : null,
       t.error ? el('div', { class: 'error' }, t.error) : null,
-      el('div', { class: 'path' }, dirname(t.path))),
+      el('div', { class: 'path' }, t.path ? (t.ref ? `on this computer: ${dirname(t.path)}` : dirname(t.path)) : '')),
     el('div', {},
       el('button', { class: 'icon', title: 'Move up (make main)', disabled: i === 0, onclick: () => move(-1) }, '↑'),
       el('button', { class: 'icon', title: 'Move down', disabled: i === list.length - 1, onclick: () => move(1) }, '↓'),
-      el('button', { class: 'icon', title: 'Remove', onclick: () => { list.splice(i, 1); if (!list.length) delete S.takes[char]; save(); renderTakes(); } }, '✕')));
+      el('button', { class: 'icon', title: t.ref ? 'Remove from this project (the file stays in Drive)' : 'Remove', disabled: t.uploading != null, onclick: () => { list.splice(i, 1); if (!list.length) delete S.takes[char]; save(); renderTakes(); } }, '✕')));
 }
 
 function renderTakes() {
@@ -278,7 +301,8 @@ function voiceRow(char, list) {
       btn.disabled = true;
       status.textContent = ' converting…';
       try {
-        const r = await api('/api/voice/preview', { method: 'POST', body: { path: list[0].path, voice: input.value.trim(), denoise: S.options.voice_denoise, seed: S.options.voice_seed, stability: S.options.voice_stability } });
+        const where = list[0].ref ? { project: S.project.id, ref: list[0].ref } : { path: list[0].path };
+        const r = await api('/api/voice/preview', { method: 'POST', body: { ...where, voice: input.value.trim(), denoise: S.options.voice_denoise, seed: S.options.voice_seed, stability: S.options.voice_stability } });
         status.textContent = '';
         audio.src = r.url;
         audio.hidden = false;
@@ -303,10 +327,8 @@ function voiceRow(char, list) {
 const NUM_OPTS = ['pre', 'post', 'merge_gap', 'voice_seed'];
 const BOOL_OPTS = ['no_merge', 'pick_best', 'enable_alts', 'retranscribe', 'convert', 'voice_denoise'];
 
-function initOptions() {
-  const d = CONFIG.defaults;
-  const o = (S.options = { ...d, ...S.options });
-  $('#models').replaceChildren(...CONFIG.models.map((m) => el('option', { value: m })));
+function fillOptions() {
+  const o = (S.options = { ...CONFIG.defaults, ...S.options });
   $('#opt-model').value = o.model;
   $('#opt-language').value = o.language;
   for (const k of NUM_OPTS) $(`#opt-${k}`).value = o[k];
@@ -315,32 +337,45 @@ function initOptions() {
   $('#stab-on').checked = o.voice_stability != null;
   $('#stab').value = Math.round((o.voice_stability ?? 0.5) * 100);
   $('#opt-name').value = S.name || '';
+  updateOptionLabels();
+}
+
+function updateOptionLabels() {
+  $('#stab').disabled = !$('#stab-on').checked;
+  $('#stab-val').textContent = $('#stab-on').checked ? `${$('#stab').value}%` : 'default (≈50%)';
+  $('#opt-merge_gap').disabled = S.options.no_merge;
+  $('#convert-where').hidden = !S.options.convert;
+}
+
+function initOptions() {
+  const d = CONFIG.defaults;
+  $('#models').replaceChildren(...CONFIG.models.map((m) => el('option', { value: m })));
+  fillOptions();
+  const o = S.options;
   $('#conv-dir').textContent = CONFIG.converted;
   $('#voice-list').replaceChildren(...CONFIG.voices.map((v) => el('option', { value: v })));
   $('#voice-price').textContent = `$${CONFIG.voice_price.toFixed(2)}`;
   renderFalKey();
   document.querySelector(`input[name=convwhere][value=${S.convertWhere}]`).checked = true;
   const sync = () => {
+    const o = S.options;
     o.model = $('#opt-model').value.trim() || d.model;
     o.language = $('#opt-language').value.trim() || d.language;
     for (const k of NUM_OPTS) o[k] = parseFloat($(`#opt-${k}`).value) || 0;
     for (const k of BOOL_OPTS) o[k] = $(`#opt-${k}`).checked;
     S.preview = $('#opt-preview').checked;
-    $('#stab').disabled = !$('#stab-on').checked;
     o.voice_stability = $('#stab-on').checked ? Number($('#stab').value) / 100 : null;
-    $('#stab-val').textContent = $('#stab-on').checked ? `${$('#stab').value}%` : 'default (≈50%)';
     S.name = $('#opt-name').value.trim();
     const where = document.querySelector('input[name=convwhere]:checked').value;
     const whereChanged = where !== S.convertWhere;
     S.convertWhere = where;
-    $('#opt-merge_gap').disabled = o.no_merge;
-    $('#convert-where').hidden = !o.convert;
+    updateOptionLabels();
     save();
     if (whereChanged) Object.values(S.takes).flat().forEach(probeTake);
   };
-  $('#sec-options').addEventListener('input', sync);
-  $('#sec-options').addEventListener('change', sync);
-  sync();
+  $('#sec-options').addEventListener('input', (e) => { if (!e.target.closest('#fal-key')) sync(); });
+  $('#sec-options').addEventListener('change', (e) => { if (!e.target.closest('#fal-key')) sync(); });
+  void o;
 }
 
 function renderFalKey() {
@@ -368,15 +403,19 @@ let lastReplace = null;
 async function runJob() {
   if (!S.parsed) { alert('Parse the screenplay first.'); return; }
   const takes = Object.fromEntries(Object.entries(S.takes)
-    .filter(([, ts]) => ts.length).map(([c, ts]) => [c, ts.map((t) => t.path)]));
+    .filter(([, ts]) => ts.length).map(([c, ts]) => [c, ts.map((t) => t.path || t.ref?.id)]));
   if (!Object.keys(takes).length) { alert('Add at least one take.'); return; }
   const voices = Object.fromEntries(Object.entries(S.voices || {}).filter(([c, v]) => v && takes[c]));
   if (Object.keys(voices).length && !CONFIG.fal_key) { alert('A voice is set, but there is no fal.ai API key. Add it under Options › Voice.'); return; }
   const options = { ...S.options, convert_next_to_original: S.convertWhere === 'next', voices };
+  if (Object.values(S.takes).flat().some((t) => t.uploading != null)) { alert('Wait for the uploads to finish.'); return; }
   try {
+    if (S.project) await flushProjectSave();
     const job = await api('/api/jobs', {
       method: 'POST',
-      body: { script: S.script, pages: S.pages, takes, options, preview: S.preview, name: S.name },
+      body: S.project
+        ? { project: S.project.id, options, preview: S.preview, name: S.name }
+        : { script: S.script, pages: S.pages, takes, options, preview: S.preview, name: S.name },
     });
     await loadRecent(job.id);
     follow(job.id);
@@ -412,7 +451,7 @@ function handleEvent(ev) {
     case 'stage': setStage(ev.name, null); appendLog(`\n== ${ev.name}`); break;
     case 'progress': setStage(null, ev.frac, ev.detail); break;
     case 'error': appendLog(`ERROR: ${ev.message}`); break;
-    case 'result': showResult(ev.result, currentJob); break;
+    case 'result': if (ev.result.segments) showResult(ev.result, currentJob); break;
     default: break;
   }
 }
@@ -450,7 +489,7 @@ async function finish(summary) {
   if (summary.status === 'done') {
     setStatus('Done.', 'done');
     const detail = await api(`/api/jobs/${summary.id}`);
-    if (detail.result) showResult(detail.result, summary.id);
+    if (detail.result?.segments) showResult(detail.result, summary.id);
   } else if (summary.status === 'cancelled') {
     setStatus('Cancelled.', 'failed');
   } else {
@@ -461,8 +500,9 @@ async function finish(summary) {
 
 // ---------------------------------------------------------------- 5. result
 
-function showResult(r, jobId) {
+function showResult(r, jobId, run = null) {
   $('#sec-result').hidden = false;
+  $('#export-status').textContent = '';
   const flagged = r.segments.filter((s) => s.flag).length;
   $('#result-summary').replaceChildren(el('p', {},
     `${r.segments.length} clips, ${tc(r.duration)} long. `,
@@ -470,17 +510,25 @@ function showResult(r, jobId) {
       : el('span', { class: 'badge ok' }, 'every clip matched well')));
 
   const fcp = $('#dl-fcpxml');
-  fcp.href = `/api/jobs/${jobId}/file/fcpxml?download=1`;
-  $('#fcpxml-path').textContent = r.fcpxml;
   const reveal = $('#reveal-fcpxml');
-  reveal.hidden = !CONFIG.mac;
-  reveal.onclick = () => api('/api/reveal', { method: 'POST', body: { path: r.fcpxml } }).catch((e) => alert(e.message));
+  const exportBtn = $('#export-fcpxml');
+  const runId = run || (r.project ? jobId : null);
+  exportBtn.hidden = !(r.project && runId) || !!jobId;
+  exportBtn.onclick = () => exportRun(runId);
+  fcp.hidden = !jobId;
+  reveal.hidden = !CONFIG.mac || !jobId;
+  $('#fcpxml-path').textContent = jobId ? r.fcpxml : '';
+  if (jobId) {
+    fcp.href = `/api/jobs/${jobId}/file/fcpxml?download=1`;
+    reveal.onclick = () => api('/api/reveal', { method: 'POST', body: { path: r.fcpxml } }).catch((e) => alert(e.message));
+  }
 
   const video = $('#preview');
   $('#preview-box').hidden = !r.preview;
   if (r.preview) {
-    video.src = `/api/jobs/${jobId}/file/preview?t=${Date.now()}`;
-    $('#dl-preview').href = `/api/jobs/${jobId}/file/preview?download=1`;
+    const base = jobId ? `/api/jobs/${jobId}/file/preview` : `/api/projects/${S.project.id}/runs/${runId}/preview`;
+    video.src = `${base}?t=${Date.now()}`;
+    $('#dl-preview').href = `${base}?download=1`;
   } else {
     video.removeAttribute('src');
   }
@@ -516,7 +564,7 @@ function showResult(r, jobId) {
   const conv = r.takes.filter((t) => t.converted);
   $('#converted').replaceChildren(...(conv.length ? [
     el('h3', {}, 'Converted files'),
-    el('ul', { class: 'small' }, ...conv.map((t) => el('li', {}, el('code', {}, basename(t.source)), ' → ', el('code', {}, t.path),
+    el('ul', { class: 'small' }, ...conv.map((t) => el('li', {}, el('code', {}, basename(t.source)), ' → ', el('code', {}, basename(t.path)),
       t.voice ? el('span', { class: 'badge' }, `voice: ${t.voice}`) : null))),
   ] : []));
 }
@@ -531,13 +579,24 @@ function applyFlagFilter() {
 async function loadRecent(selectId) {
   const { jobs } = await api('/api/jobs');
   const sel = $('#recent');
-  sel.replaceChildren(el('option', { value: '' }, '—'), ...jobs.map((j) => el('option', { value: j.id },
-    `${new Date(j.created * 1000).toLocaleString()} · ${j.name} · ${j.status}`)));
-  if (selectId) sel.value = selectId;
+  let opts;
+  if (S.project) {
+    const { runs } = await api(`/api/projects/${S.project.id}/runs`);
+    const running = jobs.filter((j) => j.project === S.project.id && j.kind === 'cut' && !runs.some((r) => r.id === j.id));
+    opts = [...running.map((j) => el('option', { value: j.id }, `${new Date(j.created * 1000).toLocaleString()} · ${j.name} · ${j.status}`)),
+      ...runs.map((r) => el('option', { value: `drive:${r.id}` },
+        `${new Date(r.created * 1000).toLocaleString()} · ${r.name} · ${r.clips} clips${r.host ? ' · ' + r.host : ''}`))];
+  } else {
+    opts = jobs.filter((j) => j.kind === 'cut' && !j.project).map((j) => el('option', { value: j.id },
+      `${new Date(j.created * 1000).toLocaleString()} · ${j.name} · ${j.status}`));
+  }
+  sel.replaceChildren(el('option', { value: '' }, '—'), ...opts);
+  if (selectId) sel.value = [...sel.options].some((o) => o.value === `drive:${selectId}`) ? `drive:${selectId}` : selectId;
   return jobs;
 }
 
 async function openJob(id) {
+  if (id.startsWith('drive:')) { openProjectRun(id.slice(6)); return; }
   const job = await api(`/api/jobs/${id}`);
   if (job.status === 'running' || job.status === 'starting') { follow(id); return; }
   currentJob = id;
@@ -551,7 +610,278 @@ async function openJob(id) {
   source.addEventListener('end', () => { source.close(); source = null; });
   setStatus(job.status === 'done' ? `Loaded run ${job.name}.` : `Run ${job.name}: ${job.status}${job.error ? ' — ' + job.error : ''}`,
     job.status === 'done' ? 'done' : 'failed');
-  if (job.result) showResult(job.result, id);
+  if (job.result?.segments) showResult(job.result, id);
+}
+
+// ---------------------------------------------------------------- Google Drive projects
+
+function renderAccount() {
+  const g = CONFIG.google;
+  const box = $('#account');
+  if (g.local_store) { box.replaceChildren(el('span', { class: 'badge drive' }, 'Projects: local test folder')); return; }
+  if (!g.client) {
+    box.replaceChildren(el('button', {
+      type: 'button', title: 'The OAuth client JSON you downloaded from Google Cloud Console (see README)',
+      onclick: () => {
+        const input = $('#client-input');
+        input.value = '';
+        input.onchange = async () => {
+          const f = input.files[0];
+          if (!f) return;
+          try {
+            CONFIG.google = await api('/api/google/client', { method: 'POST', body: { json: await f.text() } });
+            renderAccount();
+          } catch (e) { alert(e.message); }
+        };
+        input.click();
+      },
+    }, 'Set up Google Drive…'));
+    return;
+  }
+  if (!g.signed_in) {
+    box.replaceChildren(el('button', {
+      type: 'button', class: 'primary',
+      onclick: async () => {
+        try { location.href = (await api('/api/google/connect', { method: 'POST' })).url; } catch (e) { alert(e.message); }
+      },
+    }, 'Sign in with Google'));
+    return;
+  }
+  box.replaceChildren(
+    el('span', { class: 'badge drive', title: 'Projects are saved in Google Drive › Autocut' }, `✓ ${g.account || 'Google Drive'}`),
+    el('button', {
+      type: 'button', class: 'icon', title: 'Sign out of Google on this computer',
+      onclick: async () => {
+        if (!confirm('Sign out of Google Drive on this computer?')) return;
+        CONFIG.google = await api('/api/google/disconnect', { method: 'POST' });
+        closeProject();
+        renderAccount();
+        $('#project-bar').replaceChildren();
+      },
+    }, 'Sign out'));
+}
+
+async function renderProjectBar(selectId) {
+  const bar = $('#project-bar');
+  let projects = [];
+  try { ({ projects } = await api('/api/projects')); } catch (e) {
+    bar.replaceChildren(el('span', { class: 'error small' }, e.message));
+    return;
+  }
+  const sel = el('select', { title: 'Projects in Google Drive › Autocut' },
+    el('option', { value: '' }, 'No project (this computer only)'),
+    ...projects.map((p) => el('option', { value: p.id }, p.name)));
+  sel.value = selectId && projects.some((p) => p.id === selectId) ? selectId : (S.project?.id || '');
+  sel.onchange = () => (sel.value ? openProject(sel.value) : closeProject());
+  bar.replaceChildren(el('label', {}, 'Project ', sel), el('button', {
+    type: 'button', title: 'New project in Google Drive',
+    onclick: async () => {
+      const name = prompt('Name for the new project:');
+      if (!name?.trim()) return;
+      try {
+        const p = await api('/api/projects', { method: 'POST', body: { name: name.trim() } });
+        await renderProjectBar(p.id);
+        await openProject(p.id);
+      } catch (e) { alert(e.message); }
+    },
+  }, 'New…'));
+  if (sel.value && sel.value !== S.project?.id) await openProject(sel.value);
+}
+
+let applying = false;
+
+async function openProject(id) {
+  let d;
+  try { d = await api(`/api/projects/${id}`); } catch (e) { alert(e.message); return; }
+  const st = d.state;
+  applying = true;
+  S.project = { id: d.id, name: d.name, modified: d.modified, local_dir: d.local_dir };
+  S.scriptRef = st.script;
+  S.pages = st.pages || '';
+  S.takes = {};
+  for (const [c, refs] of Object.entries(st.takes || {})) S.takes[c] = refs.map((ref) => ({ ref, path: d.local[ref.id] || null }));
+  S.voices = st.voices || {};
+  S.options = { ...CONFIG.defaults, ...(st.options || {}) };
+  S.preview = st.preview ?? true;
+  S.name = st.name || '';
+  S.parsed = null;
+  fillOptions();
+  $('#pages').value = S.pages;
+  applying = false;
+  saveLocalPrefs();
+  renderScriptSource();
+  $('#sec-result').hidden = true;
+  $('#log').replaceChildren();
+  setStatus('', '');
+  if (S.scriptRef) await parseScript(); else { $('#script-result').hidden = true; renderTakes(); }
+  Object.values(S.takes).flat().forEach(probeTake);
+  loadRecent();
+}
+
+function closeProject() {
+  S.project = null;
+  S.scriptRef = null;
+  restore();
+  fillOptions();
+  saveLocalPrefs();
+  renderScriptSource();
+  $('#pages').value = S.pages || '';
+  $('#sec-result').hidden = true;
+  if (S.script) parseScript(); else { S.parsed = null; $('#script-result').hidden = true; renderTakes(); }
+  Object.values(S.takes).flat().forEach(probeTake);
+  loadRecent();
+}
+
+function renderScriptSource() {
+  const input = $('#script-path');
+  input.readOnly = !!S.project;
+  input.value = S.project ? (S.scriptRef?.name || '') : (S.script || '');
+  input.placeholder = S.project ? 'Choose or upload the screenplay PDF (saved to the project)' : '/Users/you/Scripts/scene.pdf';
+  $('#script-where').textContent = S.project
+    ? `Project "${S.project.name}" in Google Drive › Autocut. Files you add are uploaded there; this computer's copies live in ${S.project.local_dir}.`
+    : '';
+}
+
+function projectState() {
+  return {
+    version: 1, script: S.scriptRef, pages: S.pages,
+    takes: Object.fromEntries(Object.entries(S.takes).map(([c, ts]) => [c, ts.filter((t) => t.ref).map((t) => t.ref)])
+      .filter(([, refs]) => refs.length)),
+    voices: S.voices || {}, options: S.options, preview: S.preview, name: S.name,
+  };
+}
+
+let saveTimer = null;
+let saving = Promise.resolve();
+
+function scheduleProjectSave() {
+  if (applying || !S.project) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { saving = saveProject(); }, 800);
+}
+
+async function flushProjectSave() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; saving = saveProject(); }
+  await saving;
+}
+
+async function saveProject(force = false) {
+  if (!S.project) return;
+  const proj = S.project;
+  const res = await fetch(`/api/projects/${proj.id}/state`, {
+    method: 'PUT', headers: { 'X-Autocut': '1', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state: projectState(), base: force ? null : proj.modified }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) { proj.modified = data.modified; return; }
+  if (res.status === 409) {
+    if (confirm('This project was changed on another computer since you opened it.\n\n'
+      + 'OK: load their version (your changes here since then are discarded).\nCancel: keep yours and overwrite theirs.')) {
+      await openProject(proj.id);
+    } else {
+      await saveProject(true);
+    }
+    return;
+  }
+  alert(`Couldn't save the project: ${data.error || res.statusText}`);
+}
+
+function watchJob(jobId, onEvent) {
+  return new Promise((resolve) => {
+    const es = new EventSource(`/api/jobs/${jobId}/events`);
+    es.onmessage = (m) => onEvent(JSON.parse(m.data));
+    es.addEventListener('end', async (m) => {
+      es.close();
+      const summary = JSON.parse(m.data);
+      resolve({ summary, detail: summary.status === 'done' ? await api(`/api/jobs/${jobId}`) : null });
+    });
+  });
+}
+
+async function uploadToProject(paths, forWhat, onProgress) {
+  const job = await api(`/api/projects/${S.project.id}/upload`, {
+    method: 'POST', body: { files: paths.map((p) => ({ path: p, for: forWhat })) },
+  });
+  let file = 0;
+  const { summary, detail } = await watchJob(job.id, (ev) => {
+    if (ev.type === 'stage') file += 1;
+    if (ev.type === 'progress') onProgress(file - 1, ev.frac);
+  });
+  if (!detail) throw new Error(summary.error || `Upload ${summary.status}`);
+  return detail.result.uploaded.map((u) => u.ref);
+}
+
+async function uploadScript(path) {
+  const status = $('#script-status');
+  status.textContent = `Uploading ${basename(path)} to Google Drive…`;
+  try {
+    const [ref] = await uploadToProject([path], 'script', (_, f) => { status.textContent = `Uploading ${basename(path)} to Google Drive… ${pct(f)}`; });
+    S.scriptRef = ref;
+    renderScriptSource();
+    await saveProject();
+    await parseScript();
+  } catch (e) { status.replaceChildren(el('span', { class: 'error' }, e.message)); }
+}
+
+async function addProjectTakes(char, paths) {
+  const list = (S.takes[char] ||= []);
+  const rows = paths.map((path) => ({ path, uploading: 0 }));
+  list.push(...rows);
+  renderTakes();
+  try {
+    const refs = await uploadToProject(paths, char, (i, f) => { if (rows[i]) { rows[i].uploading = f; renderTakes(); } });
+    rows.forEach((t, i) => { t.ref = refs[i]; delete t.uploading; });
+    save();
+    await flushProjectSave();
+  } catch (e) {
+    for (const t of rows) { const k = list.indexOf(t); if (k >= 0) list.splice(k, 1); }
+    alert(`Upload failed: ${e.message}`);
+  }
+  renderTakes();
+  rows.filter((t) => t.ref).forEach(probeTake);
+}
+
+async function openProjectRun(runId) {
+  let d;
+  try { d = await api(`/api/projects/${S.project.id}/runs/${runId}`); } catch (e) { alert(e.message); return; }
+  if (d.local_job) { openJob(d.local_job); return; }
+  if (source) { source.close(); source = null; }
+  currentJob = null;
+  $('#log').replaceChildren();
+  lastReplace = null;
+  appendLog(d.log || '(no log saved)');
+  const s = d.summary || {};
+  setStatus(`Loaded run ${s.name || runId}${s.host ? ` (made on ${s.host})` : ''}.`, 'done');
+  if (d.result) showResult(d.result, null, runId);
+}
+
+async function exportRun(runId) {
+  const status = $('#export-status');
+  const btn = $('#export-fcpxml');
+  btn.disabled = true;
+  status.textContent = ' starting…';
+  $('#log-box').open = true;
+  try {
+    const job = await api(`/api/projects/${S.project.id}/runs/${runId}/export`, { method: 'POST' });
+    let stage = '';
+    const { summary, detail } = await watchJob(job.id, (ev) => {
+      if (ev.type === 'log') appendLog(ev.text, ev.replace);
+      if (ev.type === 'stage') { stage = ev.name; status.textContent = ` ${stage}…`; appendLog(`\n== ${ev.name}`); }
+      if (ev.type === 'progress') status.textContent = ` ${stage}… ${pct(ev.frac)}${ev.detail ? ` (${ev.detail})` : ''}`;
+    });
+    if (!detail) throw new Error(summary.error || summary.status);
+    const fcp = $('#dl-fcpxml');
+    fcp.href = `/api/jobs/${job.id}/file/fcpxml?download=1`;
+    fcp.hidden = false;
+    $('#fcpxml-path').textContent = detail.result.fcpxml;
+    const reveal = $('#reveal-fcpxml');
+    reveal.hidden = !CONFIG.mac;
+    reveal.onclick = () => api('/api/reveal', { method: 'POST', body: { path: detail.result.fcpxml } }).catch((e) => alert(e.message));
+    status.textContent = ' ready: it points at this computer\'s copies of the takes.';
+    fcp.click();
+  } catch (e) {
+    status.replaceChildren(el('span', { class: 'error' }, ` ${e.message}`));
+  } finally { btn.disabled = false; }
 }
 
 // ---------------------------------------------------------------- boot
@@ -568,22 +898,34 @@ async function boot() {
   $('#script-path').value = S.script || '';
   $('#pages').value = S.pages || '';
   document.querySelector('.pickers[data-target=script]').replaceWith(
-    pickerButtons('pdf', false, ([p]) => { $('#script-path').value = p; parseScript(); }));
+    pickerButtons('pdf', false, ([p]) => {
+      if (S.project) { uploadScript(p); return; }
+      $('#script-path').value = p; parseScript();
+    }));
   $('#parse').onclick = parseScript;
   $('#script-path').onkeydown = (e) => { if (e.key === 'Enter') parseScript(); };
   $('#pages').onkeydown = (e) => { if (e.key === 'Enter') parseScript(); };
 
   initOptions();
+  renderAccount();
   $('#run').onclick = runJob;
   $('#cancel').onclick = () => currentJob && api(`/api/jobs/${currentJob}/cancel`, { method: 'POST' });
   $('#only-flagged').onchange = applyFlagFilter;
   $('#recent').onchange = (e) => e.target.value && openJob(e.target.value);
 
-  if (S.script) await parseScript();
-  Object.values(S.takes).flat().forEach(probeTake);
+  if (new URLSearchParams(location.search).has('signed_in')) history.replaceState(null, '', '/');
+  let lastProject = null;
+  try { lastProject = JSON.parse(localStorage.getItem(STORE_KEY) || '{}').lastProject; } catch { /* ignore */ }
+  if (CONFIG.google.signed_in) await renderProjectBar(lastProject);
+  if (lastProject && CONFIG.google.signed_in && !S.project) lastProject = null;
+  if (!S.project) {
+    if (S.script) await parseScript();
+    Object.values(S.takes).flat().forEach(probeTake);
+  }
 
   const jobs = await loadRecent();
-  const running = jobs.find((j) => j.status === 'running' || j.status === 'starting');
+  const running = jobs.find((j) => j.kind === 'cut' && (j.status === 'running' || j.status === 'starting')
+    && (S.project ? j.project === S.project.id : !j.project));
   if (running) { $('#recent').value = running.id; follow(running.id); }
 }
 

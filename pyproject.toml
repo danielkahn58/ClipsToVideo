@@ -12,6 +12,8 @@ dependencies = [
     "pdfplumber>=0.10",
     "flask>=3.0",
     "fal-client>=0.5",     # ElevenLabs voice changer via fal.ai
+    "google-api-python-client>=2.100",   # projects in Google Drive
+    "google-auth-oauthlib>=1.0",
 ]
 
 [project.optional-dependencies]

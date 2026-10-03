@@ -21,12 +21,15 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory
+from flask import Flask, Response, abort, jsonify, redirect, request, send_file, send_from_directory
 
+from ..cloud import get_store
 from ..media import FFMPEG_INSTALL, converted_path, probe, resolve_problems
 from ..pipeline import Options
 from ..report import AutocutError
+from ..projects import Conflict, Project, create_project, list_projects
 from ..screenplay import characters, dump_text, load_dialogue
+from ..settings import Settings
 from ..transcribe import cache_path
 from ..voice import PRICE_PER_MIN, VOICES
 from ..voice import cache_dir as voice_cache_dir
@@ -42,7 +45,7 @@ MODELS = ["large-v3", "large-v3-turbo", "large-v2", "medium", "medium.en", "smal
           "base", "base.en", "tiny", "tiny.en"]
 
 
-def create_app(home):
+def create_app(home, port=8765):
     home = Path(home).expanduser()
     jobs_dir, uploads_dir, converted_dir = home / "jobs", home / "uploads", home / "converted"
     for d in (jobs_dir, uploads_dir, converted_dir):
@@ -51,6 +54,7 @@ def create_app(home):
     app = Flask(__name__, static_folder=None)
     settings = Settings(home / "settings.json")
     jobs = JobStore(jobs_dir, settings)
+    pending_sign_ins = {}          # OAuth state -> flow (holds the PKCE verifier)
 
     # ------------------------------------------------------------------ guard
     # The server can read and list local files, so only answer this machine's own pages:
@@ -64,13 +68,25 @@ def create_app(home):
             abort(403)
         open_paths = request.method == "GET" and (
             ("/api/jobs/" in request.path and (request.path.endswith("/events") or "/file/" in request.path))
-            or request.path.startswith("/api/voice/audio/"))
+            or request.path.startswith("/api/voice/audio/")
+            or (request.path.startswith("/api/projects/") and request.path.endswith("/preview")))
         if request.path.startswith("/api/") and not open_paths and request.headers.get("X-Autocut") != "1":
             abort(403)
 
     @app.errorhandler(AutocutError)
     def autocut_error(e):
+        if isinstance(e, Conflict):
+            return jsonify(error=str(e), conflict=True, modified=e.modified), 409
         return jsonify(error=str(e)), 400
+
+    def store():
+        st = get_store(settings)
+        if st is None:
+            raise AutocutError("Sign in with Google first.")
+        return st
+
+    def project(pid):
+        return Project.open(store(), pid, home)
 
     def body():
         return request.get_json(silent=True) or {}
@@ -102,8 +118,164 @@ def create_app(home):
             whisperx=importlib.util.find_spec("whisperx") is not None,
             models=MODELS, defaults=Options().__dict__, user_home=str(Path.home()),
             voices=VOICES, voice_price=PRICE_PER_MIN, fal_key=settings.fal_key() is not None,
-            fal_key_from_env="FAL_KEY" in os.environ,
+            fal_key_from_env="FAL_KEY" in os.environ, google=google_status_dict(),
         )
+
+    # ------------------------------------------------------------------ Google sign-in
+    def google_status_dict():
+        local = os.environ.get("AUTOCUT_STORE", "").startswith("local:")
+        signed_in = local or bool(settings.get("google_token"))
+        return {"client": local or bool(settings.get("google_client")), "signed_in": signed_in,
+                "account": "local test folder" if local else settings.get("google_account"),
+                "local_store": local}
+
+    @app.get("/api/google")
+    def google_status():
+        return jsonify(google_status_dict())
+
+    @app.post("/api/google/client")
+    def google_client():
+        from ..cloud.gdrive import check_client_config
+        settings.set("google_client", check_client_config(body().get("json") or ""))
+        return jsonify(google_status_dict())
+
+    @app.post("/api/google/connect")
+    def google_connect():
+        from ..cloud.gdrive import start_sign_in
+        client = settings.get("google_client")
+        if not client:
+            raise AutocutError("Load your Google OAuth client file first.")
+        flow, url, state = start_sign_in(client, f"http://127.0.0.1:{port}/oauth/callback")
+        pending_sign_ins[state] = flow
+        return jsonify(url=url)
+
+    @app.get("/oauth/callback")
+    def oauth_callback():
+        from ..cloud.gdrive import GoogleDriveStore, finish_sign_in
+        flow = pending_sign_ins.pop(request.args.get("state", ""), None)
+        if request.args.get("error") or not flow or not request.args.get("code"):
+            msg = request.args.get("error") or "This sign-in link expired. Start again from the app."
+            return (f"<p>Google sign-in didn't complete: {msg}</p><p><a href='/'>Back to autocut</a></p>", 400)
+        try:
+            token = finish_sign_in(flow, request.args["code"])
+            settings.set("google_token", token)
+            settings.set("google_account", GoogleDriveStore(token).account())
+        except Exception as e:  # noqa: BLE001 - show whatever Google said
+            return (f"<p>Google sign-in failed: {e}</p><p><a href='/'>Back to autocut</a></p>", 400)
+        return redirect("/?signed_in=1")
+
+    @app.post("/api/google/disconnect")
+    def google_disconnect():
+        settings.set("google_token", None)
+        settings.set("google_account", None)
+        return jsonify(google_status_dict())
+
+    # ------------------------------------------------------------------ projects
+    @app.get("/api/projects")
+    def projects_list():
+        return jsonify(projects=list_projects(store()))
+
+    @app.post("/api/projects")
+    def projects_create():
+        name = (body().get("name") or "").strip()
+        if not name:
+            raise AutocutError("Give the project a name.")
+        proj = create_project(store(), name, home)
+        return jsonify(id=proj.id, name=proj.name)
+
+    def local_status(proj, state):
+        refs = ([state["script"]] if state.get("script") else []) + \
+            [r for rs in state.get("takes", {}).values() for r in rs]
+        return {r["id"]: str(proj.local_path(r) or "") for r in refs}
+
+    @app.get("/api/projects/<pid>")
+    def projects_get(pid):
+        proj = project(pid)
+        state, modified = proj.load_state()
+        return jsonify(id=proj.id, name=proj.name, state=state, modified=modified,
+                       local_dir=str(proj.local), local=local_status(proj, state))
+
+    @app.put("/api/projects/<pid>/state")
+    def projects_save(pid):
+        b = body()
+        proj = project(pid)
+        modified = proj.save_state(b.get("state") or {}, b.get("base"))
+        return jsonify(modified=modified, local=local_status(proj, b.get("state") or {}))
+
+    @app.post("/api/projects/<pid>/upload")
+    def projects_upload(pid):
+        proj = project(pid)
+        files = [{"path": str(existing(f.get("path"))), "for": f.get("for")} for f in body().get("files", [])]
+        if not files:
+            raise AutocutError("No files to upload.")
+        job = jobs.create("upload", {"kind": "upload", "home": str(home), "name": "upload",
+                                     "project": {"id": proj.id, "name": proj.name}, "files": files},
+                          preview=False)
+        return jsonify(job.summary())
+
+    @app.post("/api/projects/<pid>/parse")
+    def projects_parse(pid):
+        proj = project(pid)
+        state, _ = proj.load_state()
+        if not state.get("script"):
+            raise AutocutError("Add the screenplay PDF first.")
+        path = proj.ensure_local(state["script"])        # PDFs are small: fetch right away
+        lines = load_dialogue(path, body().get("pages") or None)
+        return jsonify(path=str(path), lines=[{"n": i, "page": ln.page, "character": ln.character,
+                                               "text": ln.text} for i, ln in enumerate(lines, 1)],
+                       characters=[{"name": c, "lines": n} for c, n in characters(lines).items()],
+                       dump=dump_text(lines))
+
+    @app.post("/api/projects/<pid>/probe")
+    def projects_probe(pid):
+        proj = project(pid)
+        ref = body().get("ref") or {}
+        p = proj.local_path(ref)
+        in_drive = bool(proj.store.find(proj.sub("transcripts"), ref.get("name", "") + ".words.json"))
+        if not p:
+            return jsonify(local=False, name=ref.get("name"), size=ref.get("size") or 0, cached=in_drive)
+        info = probe(p)
+        return jsonify(local=True, path=str(p), name=ref.get("name"), size=p.stat().st_size,
+                       width=info["width"], height=info["height"], fps=float(info["rate"]),
+                       duration=info["duration"], vcodec=info["vcodec"], acodec=info["acodec"],
+                       problems=resolve_problems(info), converted=None, converted_exists=False,
+                       cached=in_drive or cache_path(p).exists())
+
+    @app.get("/api/projects/<pid>/runs")
+    def projects_runs(pid):
+        return jsonify(runs=project(pid).list_runs())
+
+    @app.get("/api/projects/<pid>/runs/<run_id>")
+    def projects_run(pid, run_id):
+        proj = project(pid)
+        folder = proj.run_folder(run_id)
+        log = proj.store.find(folder, "log.txt")
+        local = jobs.get(run_id)
+        return jsonify(result=proj.run_json(run_id, "result.json"),
+                       summary=proj.run_json(run_id, "summary.json"),
+                       log=proj.store.read_bytes(log["id"]).decode("utf-8", "replace") if log else "",
+                       local_job=run_id if local and local.out.exists() else None)
+
+    @app.get("/api/projects/<pid>/runs/<run_id>/preview")
+    def projects_run_preview(pid, run_id):
+        local = jobs.get(run_id)
+        path = local.preview if local and local.preview and local.preview.exists() else \
+            project(pid).run_file(run_id, "preview.mp4")
+        if not path:
+            abort(404)
+        return send_file(path, mimetype="video/mp4", as_attachment=request.args.get("download") == "1",
+                         download_name=f"{run_id}_preview.mp4", conditional=True, max_age=0)
+
+    @app.post("/api/projects/<pid>/runs/<run_id>/export")
+    def projects_export(pid, run_id):
+        proj = project(pid)
+        if jobs.running():
+            raise AutocutError("A job is already running. Wait for it, or cancel it first.")
+        job = jobs.create(f"export-{run_id}", {
+            "kind": "export", "home": str(home), "name": run_id, "run_id": run_id,
+            "project": {"id": proj.id, "name": proj.name}, "converted_dir": str(converted_dir)},
+            preview=False)
+        return jsonify(job.summary())
 
     @app.post("/api/settings")
     def save_settings():
@@ -116,7 +288,13 @@ def create_app(home):
     @app.post("/api/voice/preview")
     def preview_voice():
         b = body()
-        p = existing(b.get("path"), "Video")
+        if b.get("project") and b.get("ref"):
+            p = project(b["project"]).local_path(b["ref"])
+            if not p:
+                raise AutocutError("That take isn't on this computer yet. It's downloaded when you "
+                                   "build the cut (or upload it from here).")
+        else:
+            p = existing(b.get("path"), "Video")
         voice = (b.get("voice") or "").strip()
         if not voice:
             raise AutocutError("Pick a voice first.")
@@ -245,6 +423,8 @@ def create_app(home):
         b = body()
         if jobs.running():
             raise AutocutError("A job is already running. Wait for it, or cancel it first.")
+        if b.get("project"):
+            return create_project_job(b)
         script = existing(b.get("script"), "Screenplay")
         videos = []
         for char, paths in (b.get("takes") or {}).items():
@@ -260,6 +440,29 @@ def create_app(home):
         job = jobs.create(name, {
             "script": str(script), "pages": b.get("pages") or None, "videos": videos,
             "options": opts, "name": name,
+        }, preview=bool(b.get("preview", True)))
+        return jsonify(job.summary())
+
+    def job_options(b):
+        o = dict(b.get("options") or {})
+        o["convert_dir"] = None if o.pop("convert_next_to_original", True) else str(converted_dir)
+        o["fallback_dir"] = str(converted_dir)
+        return Options.from_dict(o).__dict__
+
+    def create_project_job(b):
+        proj = project(b["project"])
+        state, _ = proj.load_state()
+        if not state.get("script"):
+            raise AutocutError("Add the screenplay PDF first.")
+        take_refs = [[char.strip().upper(), ref] for char, refs in (state.get("takes") or {}).items()
+                     for ref in refs]
+        if not take_refs:
+            raise AutocutError("Add at least one take.")
+        name = re.sub(r"[^\w.\- ]+", "_", (b.get("name") or state.get("name") or proj.name)).strip() or "cut"
+        job = jobs.create(name, {
+            "kind": "cut", "home": str(home), "project": {"id": proj.id, "name": proj.name},
+            "script_ref": state["script"], "take_refs": take_refs, "pages": state.get("pages") or None,
+            "options": job_options(b), "name": name,
         }, preview=bool(b.get("preview", True)))
         return jsonify(job.summary())
 
@@ -383,7 +586,12 @@ class Job:
     def summary(self):
         return {"id": self.id, "name": self.cfg.get("name"), "status": self.status,
                 "created": self.state.get("created"), "ended": self.state.get("ended"),
-                "error": self.state.get("error"), "script": self.cfg.get("script")}
+                "error": self.state.get("error"), "script": self.cfg.get("script"),
+                "kind": self.kind, "project": (self.cfg.get("project") or {}).get("id")}
+
+    @property
+    def kind(self):
+        return self.cfg.get("kind", "cut")
 
     def detail(self):
         result_file = self.dir / "result.json"
@@ -479,31 +687,6 @@ class Job:
         threading.Thread(target=hard_kill, daemon=True).start()
 
 
-class Settings:
-    """Small JSON settings file in the workspace (the fal.ai key), readable only by you."""
-
-    def __init__(self, path):
-        self.path = Path(path)
-
-    def _read(self):
-        try:
-            return json.loads(self.path.read_text())
-        except (OSError, ValueError):
-            return {}
-
-    def set(self, k, v):
-        d = self._read()
-        if v is None:
-            d.pop(k, None)
-        else:
-            d[k] = v
-        self.path.write_text(json.dumps(d))
-        os.chmod(self.path, 0o600)
-
-    def fal_key(self):
-        return os.environ.get("FAL_KEY") or self._read().get("fal_key")
-
-
 class JobStore:
     def __init__(self, root, settings=None):
         self.root = Path(root)
@@ -524,7 +707,8 @@ class JobStore:
         return self.jobs.get(job_id)
 
     def running(self):
-        return any(not j.finished for j in self.jobs.values())
+        """A cut or export in progress (uploads can run alongside)."""
+        return any(not j.finished and j.kind != "upload" for j in self.jobs.values())
 
     def create(self, name, cfg, preview):
         with self.lock:
@@ -556,7 +740,7 @@ def main(argv=None):
     p.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
     args = p.parse_args(argv)
 
-    app = create_app(args.home)
+    app = create_app(args.home, args.port)
     url = f"http://127.0.0.1:{args.port}"
     print(f"autocut web UI: {url}   (workspace: {Path(args.home).expanduser()})\nCtrl-C to stop.")
     if not args.no_browser:

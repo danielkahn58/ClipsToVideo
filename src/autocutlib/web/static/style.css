@@ -18,7 +18,7 @@ body { margin: 0; background: var(--bg); color: var(--text);
 header { display: flex; align-items: baseline; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--line); }
 header h1 { margin: 0; font-size: 20px; }
 header .sub { color: var(--muted); }
-header .recent { margin-left: auto; color: var(--muted); font-size: 13px; }
+header .recent { color: var(--muted); font-size: 13px; }
 main { max-width: 1180px; margin: 0 auto; padding: 16px 24px 80px; }
 section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin: 16px 0; }
 h2 { margin: 0 0 12px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
@@ -104,3 +104,12 @@ dialog::backdrop { background: rgba(0, 0, 0, .35); }
 
 .row.voice { border-top: 1px dashed var(--line); padding-top: 8px; }
 .row.voice audio { height: 32px; }
+
+header .account, header .project-bar { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+header .account { margin-left: auto; }
+header .recent { margin-left: 12px; }
+.project-bar select { max-width: 220px; }
+.badge.drive { background: #e6f4ea; color: #1a7f37; }
+@media (prefers-color-scheme: dark) { .badge.drive { background: #1d3324; color: #5cd27d; } }
+.take .progress { height: 4px; background: var(--line); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+.take .progress > div { height: 100%; background: var(--accent); }

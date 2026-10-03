@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .align import align
-from .edit import Take, build_segments
+from .edit import Clip, Segment, Take, build_segments
 from .fcpxml import write_fcpxml
 from .media import convert_for_resolve, probe, require_ffmpeg, resolve_problems
 from .preview import render_preview
@@ -12,7 +12,7 @@ from .report import AutocutError, Reporter
 from .screenplay import load_dialogue
 from .text import fmt_tc
 from .transcribe import Transcriber, transcript_tokens
-from .voice import DEFAULT_SEED, build_voiced_takes, require_fal
+from .voice import DEFAULT_SEED, build_voiced_takes
 
 LOW_MATCH = 0.6     # lines that matched fewer of their words than this get flagged
 
@@ -36,6 +36,7 @@ class Options:
     voice_denoise: bool = False   # ask the voice changer to strip background noise first
     voice_seed: int = DEFAULT_SEED  # same seed -> same rendition of the voice; change to vary it
     voice_stability: float = None   # 0..1; None = the voice's own default (ElevenLabs: usually 0.5)
+    voice_cache_dir: str = None     # where converted voice audio is cached (None = user cache dir)
 
     @classmethod
     def from_dict(cls, d):
@@ -142,7 +143,6 @@ def apply_voices(segs, takes, opts, rep):
         rep.warn(f"Voice set for {char}, but {char} has no takes; ignored.")
     if not set(voices) & set(takes):
         return
-    require_fal()
     for char, ts in takes.items():
         voice = voices.get(char)
         if not voice:
@@ -190,3 +190,44 @@ def result_dict(segs, takes, lines, out, preview, total, opts):
         "skipped": [{"n": i, "character": ln.character, "text": ln.text}
                     for i, ln in enumerate(lines, 1) if i not in used],
     }
+
+
+def export_from_result(result, take_files, out, reporter=None, opts=None):
+    """Rebuild a run's FCPXML from its result.json on any computer.
+
+    take_files: this computer's file for each entry of result["takes"] (same order). Files Resolve
+    can't read are converted again, and voices are re-applied from the voice audio cache (no new
+    API calls when the project's cached audio was synced). Returns the timeline length.
+    """
+    rep = reporter or Reporter()
+    require_ffmpeg()
+    opts = opts or Options.from_dict({k: v for k, v in result.get("options", {}).items()
+                                      if k not in ("convert_dir", "fallback_dir", "voice_cache_dir")})
+    by_char, all_takes = {}, []
+    for t, src in zip(result["takes"], take_files):
+        src = Path(src)
+        info = probe(src)
+        path, problems = src, resolve_problems(info)
+        if problems and opts.convert:
+            path = convert_for_resolve(src, info, opts.convert_dir, opts.fallback_dir, rep)
+            info = probe(path)
+        take = Take(t["character"], t["take"] - 1, path, src, info)
+        by_char.setdefault(take.character, []).append(take)
+        all_takes.append(take)
+
+    def take_of(char, number):
+        return next(t for t in by_char[char] if t.index == number - 1)
+
+    segs = []
+    for s in result["segments"]:
+        char = s["character"]
+        primary = Clip(take_of(char, s["primary"]["take"]), s["primary"]["start"], s["primary"]["end"],
+                       s["primary"]["ratio"])
+        alts = [Clip(take_of(char, a["take"]), a["start"], a["end"], a["ratio"]) for a in s["alts"]]
+        segs.append(Segment(char, s["lines"], s["text"], primary, alts))
+    apply_voices(segs, by_char, opts, rep)
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    total = write_fcpxml(segs, all_takes, out, out.stem, opts.enable_alts, rep)
+    rep.log(f"Wrote {out}: {len(segs)} clips, {fmt_tc(total)} long.")
+    return total

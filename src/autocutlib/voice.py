@@ -59,6 +59,7 @@ def require_fal():
 
 def call_fal(audio_path, voice, denoise, rep, seed=DEFAULT_SEED, stability=None):
     """Send one audio file through the voice changer; returns the URL of the result."""
+    require_fal()
     import fal_client
     url = fal_client.upload_file(audio_path)
 
@@ -120,8 +121,9 @@ def _duration(path):
 
 
 def _file_key(path):
-    st = Path(path).stat()
-    return f"{Path(path).resolve()}|{st.st_size}|{int(st.st_mtime)}"
+    # Name + size rather than full path + time, so the same take on another computer (synced
+    # through a project) maps to the same cached audio and isn't paid for again.
+    return f"{Path(path).name}|{Path(path).stat().st_size}"
 
 
 def batches(items, limit=MAX_BATCH):
@@ -139,18 +141,20 @@ def batches(items, limit=MAX_BATCH):
     return out
 
 
-def convert_batch(items, voice, denoise, seed, rep, caller=None, stability=None):
+def convert_batch(items, voice, denoise, seed, rep, caller=None, stability=None, cache=None):
     """Convert several stretches [(take_path, start, end)] in ONE request, so they all get the
     same rendition of the voice. Returns ([48 kHz mono WAV per stretch, each exactly its input
     length], seconds newly sent to the API)."""
     sig = json.dumps([[_file_key(p), s, e] for p, s, e in items] + [voice, bool(denoise), seed]
                      + ([stability] if stability is not None else []))
     key = hashlib.sha1(sig.encode()).hexdigest()[:20]
-    outs = [cache_dir() / f"{key}-{i}.wav" for i in range(len(items))]
+    cache = Path(cache) if cache else cache_dir()
+    cache.mkdir(parents=True, exist_ok=True)
+    outs = [cache / f"{key}-{i}.wav" for i in range(len(items))]
     if all(o.exists() for o in outs):
         return outs, 0.0
 
-    tmp = cache_dir() / f"{key}.work"
+    tmp = cache / f"{key}.work"
     tmp.mkdir(exist_ok=True)
     try:
         # One input file: stretch, silence, stretch, silence, ...
@@ -214,7 +218,9 @@ def build_voiced_takes(takes_ranges, voice, opts, rep, caller=None):
         plan.append((take, ranges, dst))
 
     # Everything for this character in as few requests as possible (normally one).
-    items = [(t.path, s, e) for t, ranges, _ in plan for s, e in ranges]
+    # Audio is read from the original file (identical timing to a ProRes copy, and the same
+    # on every computer, so cached conversions are found again).
+    items = [(t.source, s, e) for t, ranges, _ in plan for s, e in ranges]
     groups = batches(items)
     wavs, sent = [], 0.0
     for n, group in enumerate(groups, 1):
@@ -222,7 +228,7 @@ def build_voiced_takes(takes_ranges, voice, opts, rep, caller=None):
             rep.log(f"  request {n}/{len(groups)} ({sum(e - s for _, s, e in group):.0f}s of audio)")
         rep.progress((n - 1) / len(groups), f"converting {n}/{len(groups)}")
         got, new = convert_batch(group, voice, opts.voice_denoise, seed, rep, caller,
-                                 stability=opts.voice_stability)
+                                 stability=opts.voice_stability, cache=opts.voice_cache_dir)
         wavs += got
         sent += new
     if sent:

@@ -10,6 +10,8 @@
 <header>
   <h1>autocut</h1>
   <span class="sub">screenplay + per-character takes &rarr; Resolve timeline</span>
+  <div id="account" class="account"></div>
+  <div id="project-bar" class="project-bar"></div>
   <label class="recent">Past runs
     <select id="recent"><option value="">—</option></select>
   </label>
@@ -24,6 +26,7 @@
       <input id="script-path" class="path" placeholder="/Users/you/Scripts/scene.pdf" spellcheck="false">
       <span class="pickers" data-kind="pdf" data-target="script"></span>
     </div>
+    <div id="script-where" class="muted small"></div>
     <div class="row">
       <label>Pages <input id="pages" placeholder="all, or 3-4 / 3,5-6" size="16"></label>
       <button id="parse" class="primary">Parse dialogue</button>
@@ -122,6 +125,9 @@
     <div id="result-summary"></div>
     <div class="row">
       <a id="dl-fcpxml" class="button primary" download>Download FCPXML</a>
+      <button id="export-fcpxml" class="primary" hidden
+        title="Downloads the takes this cut uses to this computer and writes a timeline that points at them">Get FCPXML for this computer</button>
+      <span id="export-status" class="small"></span>
       <button id="reveal-fcpxml" hidden>Show in Finder</button>
       <code id="fcpxml-path" class="small"></code>
     </div>
@@ -160,6 +166,7 @@
 </dialog>
 
 <input type="file" id="upload-input" hidden>
+<input type="file" id="client-input" accept=".json,application/json" hidden>
 <script type="module" src="/static/app.js"></script>
 </body>
 </html>

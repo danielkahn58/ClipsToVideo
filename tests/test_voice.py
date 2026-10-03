@@ -153,6 +153,7 @@ def fake_fal_client(monkeypatch, reject_stability):
     mod = types.SimpleNamespace(upload_file=lambda p: "https://example.invalid/in.wav",
                                 subscribe=subscribe, FalClientHTTPError=_FakeHTTPError)
     monkeypatch.setitem(__import__("sys").modules, "fal_client", mod)
+    monkeypatch.setenv("FAL_KEY", "test")
     return sent
 
 

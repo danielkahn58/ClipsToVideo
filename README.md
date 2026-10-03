@@ -10,6 +10,8 @@ screen. It can also render a quick MP4 preview, and change a character's voice w
 voice changer (via fal.ai).
 
 There is a **local web UI** (`autocut-web`) and the original **command line** (`python autocut.py` / `autocut`).
+Projects can be saved in **Google Drive** and opened from any computer
+(see [Projects in Google Drive](#projects-in-google-drive)).
 
 ## Setup (macOS)
 
@@ -154,6 +156,59 @@ video and AAC or PCM audio. Anything else is converted automatically. For exampl
 - The FCPXML points at the ProRes copy, so keep it.
 - The transcript cache is shared: `take.mpeg.words.json` is reused for
   `take.prores.mov` (and the reverse), because the timing is identical.
+
+## Projects in Google Drive
+
+Sign in with Google in the web UI and keep each project (screenplay, takes, settings,
+transcripts, runs) in Google Drive, so you can pick it up on another computer.
+
+### One-time Google setup
+
+Google requires each app to have its own sign-in credentials. In
+[Google Cloud Console](https://console.cloud.google.com/) (free, no billing needed), signed in
+with the Google account whose Drive you'll use:
+
+1. **Create a project** (project picker at the top › *New project*), and keep it selected.
+2. **Enable the Drive API**: <https://console.cloud.google.com/apis/library/drive.googleapis.com> › *Enable*.
+3. **Sign-in screen**: <https://console.cloud.google.com/auth/overview> › *Get started*. App
+   name, your email, Audience **External**. Then *Data access* › *Add or remove scopes* ›
+   *Manually add scopes*: `https://www.googleapis.com/auth/drive.file`. Then *Audience* ›
+   **Publish app** (it then says "In production").
+4. **Credentials**: *Clients* › *Create client* › type **Desktop app** › *Create* › **Download JSON**.
+
+The app only asks for `drive.file`: it can see only the files and folders it created itself
+(everything under **My Drive › Autocut**), nothing else in your Drive. That's why Google
+doesn't need to review it. The first sign-in may still show "Google hasn't verified this app";
+choose *Advanced* › *Go to …*. Keep the JSON file private.
+
+### On each computer
+
+1. Start `autocut-web`, click **Set up Google Drive…** (top right) and choose the JSON file.
+2. Click **Sign in with Google** and allow access.
+3. **Project ▾ › New…** to create a project, or pick an existing one.
+
+The sign-in and the fal.ai key are stored per computer, in the workspace's `settings.json`.
+
+### How it works
+
+- A project is the Drive folder **My Drive › Autocut › <project>**: `project.json` (the setup),
+  `files/` (screenplay and takes), `transcripts/`, `voice/` (voice-changer audio) and `runs/`.
+- Adding a screenplay or take (*Choose…*, *Browse…*, a pasted path, or *Upload…*) uploads it to
+  the project, with progress. A file you add from this computer is used where it is; it isn't
+  copied locally.
+- Changes autosave to Drive. If another computer saved in the meantime you're asked whether to
+  load their version or keep yours.
+- **Build the cut** downloads what this computer doesn't have yet (into
+  `<workspace>/projects/<project>/`), runs, then saves the result, log, preview, transcripts and
+  voice audio to Drive. Other computers see the run under *Past runs*.
+- A run made on another computer has **Get FCPXML for this computer**: it downloads the takes
+  that cut uses, redoes any ProRes conversion and voice change locally (from the synced voice
+  audio, so fal isn't charged again), and writes an FCPXML pointing at this computer's copies.
+  Keep those files where they are for Resolve.
+- Not uploaded: ProRes conversions and voice-changed `.mov` files (big, and quick to rebuild).
+- The app can't see files you put in Drive yourself (on drive.google.com or with Drive for
+  desktop); add takes through the app.
+- Without signing in (*Project: No project*) everything works as before, on this computer only.
 
 ## Changing a character's voice
 
