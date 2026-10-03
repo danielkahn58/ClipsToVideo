@@ -80,3 +80,24 @@ def test_client_upload_then_connect(client):
     assert c.post("/api/google/client", json={"json": "{}"}).status_code == 400
     assert c.post("/api/google/client", json={"json": json.dumps(CLIENT)}).status_code == 200
     assert "url" in c.post("/api/google/connect").get_json()
+
+
+def test_missing_google_libraries_explained(client, monkeypatch):
+    import sys
+    c, _ = client
+    monkeypatch.setitem(sys.modules, "google_auth_oauthlib.flow", None)
+    c.post("/api/google/client", json={"json": json.dumps(CLIENT)})
+    r = c.post("/api/google/connect")
+    assert r.status_code == 400 and "pip install" in r.get_json()["error"]
+
+
+def test_unexpected_errors_are_json(client, monkeypatch):
+    from autocutlib.web import server
+    c, _ = client
+
+    def boom(*a, **k):
+        raise RuntimeError("disk on fire")
+    monkeypatch.setattr(server, "list_projects", boom)
+    monkeypatch.setenv("AUTOCUT_STORE", "local:" + str(_ / "drive"))
+    r = c.get("/api/projects")
+    assert r.status_code == 500 and "RuntimeError: disk on fire" in r.get_json()["error"]

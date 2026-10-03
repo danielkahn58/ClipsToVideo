@@ -62,8 +62,22 @@ def find_client_file(folders):
     return None, None
 
 
+MISSING_LIBS = ("The Google Drive libraries aren't installed. In the ClipsToVideo folder (with the "
+                "virtual environment active) run:  pip install -e \".[whisper]\"  then restart autocut-web.")
+
+
+def require_google_libs():
+    try:
+        import google.oauth2.credentials  # noqa: F401
+        import google_auth_oauthlib.flow  # noqa: F401
+        import googleapiclient.discovery  # noqa: F401
+    except ImportError:
+        raise StoreError(MISSING_LIBS) from None
+
+
 def start_sign_in(client_config, redirect_uri):
     """Returns (flow, url, state). Keep the flow: it holds the PKCE verifier for finish_sign_in."""
+    require_google_libs()
     from google_auth_oauthlib.flow import Flow
     flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=redirect_uri)
     url, state = flow.authorization_url(access_type="offline", prompt="consent")
@@ -84,6 +98,7 @@ def _escape(s):
 
 class GoogleDriveStore(Store):
     def __init__(self, token_info):
+        require_google_libs()
         from google.oauth2.credentials import Credentials
         self.creds = Credentials.from_authorized_user_info(token_info, SCOPES)
         self._root = None

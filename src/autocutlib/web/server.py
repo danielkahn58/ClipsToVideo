@@ -79,6 +79,16 @@ def create_app(home, port=8765):
             return jsonify(error=str(e), conflict=True, modified=e.modified), 409
         return jsonify(error=str(e)), 400
 
+    @app.errorhandler(Exception)
+    def unexpected_error(e):
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            return e
+        app.logger.exception("Unexpected error on %s", request.path)   # full traceback in the terminal
+        if request.path.startswith("/api/"):
+            return jsonify(error=f"{type(e).__name__}: {e} (details in the terminal running autocut-web)"), 500
+        return f"<p>Something went wrong: {type(e).__name__}: {e}</p><p><a href='/'>Back</a></p>", 500
+
     def store():
         st = get_store(settings)
         if st is None:
