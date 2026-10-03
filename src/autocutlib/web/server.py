@@ -23,7 +23,7 @@ from pathlib import Path
 
 from flask import Flask, Response, abort, jsonify, request, send_file, send_from_directory
 
-from ..media import converted_path, probe, resolve_problems
+from ..media import FFMPEG_INSTALL, converted_path, probe, resolve_problems
 from ..pipeline import Options
 from ..report import AutocutError
 from ..screenplay import characters, dump_text, load_dialogue
@@ -98,6 +98,7 @@ def create_app(home):
             home=str(home), uploads=str(uploads_dir), converted=str(converted_dir),
             mac=IS_MAC, picker=IS_MAC and shutil.which("osascript") is not None,
             ffmpeg=shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None,
+            ffmpeg_install=FFMPEG_INSTALL,
             whisperx=importlib.util.find_spec("whisperx") is not None,
             models=MODELS, defaults=Options().__dict__, user_home=str(Path.home()),
             voices=VOICES, voice_price=PRICE_PER_MIN, fal_key=settings.fal_key() is not None,

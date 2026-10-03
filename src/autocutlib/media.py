@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from fractions import Fraction
 from pathlib import Path
 
@@ -23,11 +24,19 @@ RESOLVE_AUDIO = {"aac", "alac", "pcm_s16le", "pcm_s16be", "pcm_s24le", "pcm_s24b
 
 CONVERTED_SUFFIX = ".prores.mov"
 
+if os.name == "nt":
+    FFMPEG_INSTALL = ("Install with: winget install -e --id Gyan.FFmpeg  "
+                      "(then open a new terminal window and start autocut again)")
+elif sys.platform == "darwin":
+    FFMPEG_INSTALL = "Install with: brew install ffmpeg"
+else:
+    FFMPEG_INSTALL = "Install ffmpeg with your package manager, e.g. sudo apt install ffmpeg"
+
 
 def require_ffmpeg():
     missing = [t for t in ("ffmpeg", "ffprobe") if shutil.which(t) is None]
     if missing:
-        raise AutocutError(f"{' and '.join(missing)} not found on PATH. Install with: brew install ffmpeg")
+        raise AutocutError(f"{' and '.join(missing)} not found on PATH. {FFMPEG_INSTALL}")
 
 
 def probe(path):

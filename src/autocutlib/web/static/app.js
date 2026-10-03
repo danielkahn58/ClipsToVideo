@@ -561,7 +561,7 @@ async function boot() {
   CONFIG = await api('/api/config');
 
   const warn = [];
-  if (!CONFIG.ffmpeg) warn.push('ffmpeg/ffprobe not found on PATH — install with: brew install ffmpeg');
+  if (!CONFIG.ffmpeg) warn.push(`ffmpeg/ffprobe not found on PATH. ${CONFIG.ffmpeg_install}`);
   if (!CONFIG.whisperx) warn.push('WhisperX is not installed, so only takes with cached .words.json transcripts will work. See the README (pip install -e ".[whisper]").');
   $('#env-warnings').replaceChildren(...warn.map((w) => el('div', { class: 'warning' }, w)));
 
