@@ -14,3 +14,7 @@ dist/
 *.fcpxml
 *.words.json
 demo/
+
+# Google OAuth client files (keep private)
+client_secret*.json
+google_client.json

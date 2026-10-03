@@ -619,32 +619,11 @@ function renderAccount() {
   const g = CONFIG.google;
   const box = $('#account');
   if (g.local_store) { box.replaceChildren(el('span', { class: 'badge drive' }, 'Projects: local test folder')); return; }
-  if (!g.client) {
-    box.replaceChildren(el('button', {
-      type: 'button', title: 'The OAuth client JSON you downloaded from Google Cloud Console (see README)',
-      onclick: () => {
-        const input = $('#client-input');
-        input.value = '';
-        input.onchange = async () => {
-          const f = input.files[0];
-          if (!f) return;
-          try {
-            CONFIG.google = await api('/api/google/client', { method: 'POST', body: { json: await f.text() } });
-            renderAccount();
-          } catch (e) { alert(e.message); }
-        };
-        input.click();
-      },
-    }, 'Set up Google Drive…'));
-    return;
-  }
   if (!g.signed_in) {
     box.replaceChildren(el('button', {
-      type: 'button', class: 'primary',
-      onclick: async () => {
-        try { location.href = (await api('/api/google/connect', { method: 'POST' })).url; } catch (e) { alert(e.message); }
-      },
-    }, 'Sign in with Google'));
+      type: 'button', class: 'primary', title: 'Sign in with Google to keep projects in your Google Drive',
+      onclick: connectGoogle,
+    }, 'Connect Google Drive'));
     return;
   }
   box.replaceChildren(
@@ -659,6 +638,32 @@ function renderAccount() {
         $('#project-bar').replaceChildren();
       },
     }, 'Sign out'));
+}
+
+async function connectGoogle() {
+  try {
+    const r = await api('/api/google/connect', { method: 'POST' });
+    if (r.url) { location.href = r.url; return; }
+  } catch (e) { alert(e.message); return; }
+  // No client file found on this computer: ask for it once, then go on to Google's sign-in.
+  const dlg = $('#google-setup');
+  const err = $('#google-setup-error');
+  err.hidden = true;
+  $('#google-setup-choose').onclick = () => {
+    const input = $('#client-input');
+    input.value = '';
+    input.onchange = async () => {
+      const f = input.files[0];
+      if (!f) return;
+      try {
+        CONFIG.google = await api('/api/google/client', { method: 'POST', body: { json: await f.text() } });
+        dlg.close();
+        connectGoogle();
+      } catch (e) { err.textContent = e.message; err.hidden = false; }
+    };
+    input.click();
+  };
+  dlg.showModal();
 }
 
 async function renderProjectBar(selectId) {

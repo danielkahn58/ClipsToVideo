@@ -141,10 +141,15 @@ def create_app(home, port=8765):
 
     @app.post("/api/google/connect")
     def google_connect():
-        from ..cloud.gdrive import start_sign_in
+        from ..cloud.gdrive import find_client_file, start_sign_in
         client = settings.get("google_client")
         if not client:
-            raise AutocutError("Load your Google OAuth client file first.")
+            # One-time per computer: pick up the client file from where it was downloaded.
+            path, client = find_client_file([Path.home() / d for d in ("Downloads", "Desktop", "Documents")]
+                                            + [home, SRC_ROOT.parent])
+            if not client:
+                return jsonify(need_client=True)
+            settings.set("google_client", client)
         flow, url, state = start_sign_in(client, f"http://127.0.0.1:{port}/oauth/callback")
         pending_sign_ins[state] = flow
         return jsonify(url=url)

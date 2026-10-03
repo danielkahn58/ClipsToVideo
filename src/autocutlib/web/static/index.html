@@ -167,6 +167,24 @@
 
 <input type="file" id="upload-input" hidden>
 <input type="file" id="client-input" accept=".json,application/json" hidden>
+
+<!-- One-time Google setup, shown only when the client file can't be found automatically -->
+<dialog id="google-setup">
+  <form method="dialog">
+    <h3>Connect Google Drive: one-time setup on this computer</h3>
+    <p>Before Google's sign-in page, the app needs its <b>Google client file</b>: the JSON you
+      downloaded from Google Cloud Console when creating the "Desktop app" client. It's usually in
+      Downloads and named <code>client_secret_….apps.googleusercontent.com.json</code>.</p>
+    <p class="muted small">It isn't your Google password; it only identifies this app to Google.
+      Put it in Downloads (or the ClipsToVideo folder) and it's found automatically next time.
+      Don't have one? See <a href="https://github.com/danielkahn58/ClipsToVideo#one-time-google-setup" target="_blank">the README</a>.</p>
+    <p id="google-setup-error" class="error" hidden></p>
+    <div class="row end">
+      <button value="cancel">Cancel</button>
+      <button id="google-setup-choose" class="primary" type="button">Choose the file…</button>
+    </div>
+  </form>
+</dialog>
 <script type="module" src="/static/app.js"></script>
 </body>
 </html>

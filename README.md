@@ -183,8 +183,11 @@ choose *Advanced* › *Go to …*. Keep the JSON file private.
 
 ### On each computer
 
-1. Start `autocut-web`, click **Set up Google Drive…** (top right) and choose the JSON file.
-2. Click **Sign in with Google** and allow access.
+1. Leave the downloaded client file (`client_secret_….apps.googleusercontent.com.json`) in your
+   **Downloads** folder (or put it in the ClipsToVideo folder).
+2. Start `autocut-web` and click **Connect Google Drive** (top right). The app finds the file by
+   itself and takes you to Google's sign-in page; allow access. (If it can't find the file, it
+   asks you to choose it once.)
 3. **Project ▾ › New…** to create a project, or pick an existing one.
 
 The sign-in and the fal.ai key are stored per computer, in the workspace's `settings.json`.

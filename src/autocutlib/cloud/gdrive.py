@@ -40,6 +40,28 @@ def check_client_config(data):
     return data
 
 
+# Google names it client_secret_<id>.apps.googleusercontent.com.json; browsers may add "(1)" etc.
+CLIENT_FILE_PATTERNS = ("*client_secret*.json", "google_client.json")
+
+
+def find_client_file(folders):
+    """The newest valid Google OAuth client file in `folders` (Google's default download name is
+    client_secret_<id>.apps.googleusercontent.com.json), as (path, config), or (None, None)."""
+    found = []
+    for folder in folders:
+        folder = Path(folder).expanduser()
+        if not folder.is_dir():
+            continue
+        for pattern in CLIENT_FILE_PATTERNS:
+            found += [p for p in folder.glob(pattern) if p.is_file()]
+    for p in sorted(set(found), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            return p, check_client_config(p.read_text())
+        except (OSError, StoreError):
+            continue
+    return None, None
+
+
 def start_sign_in(client_config, redirect_uri):
     """Returns (flow, url, state). Keep the flow: it holds the PKCE verifier for finish_sign_in."""
     from google_auth_oauthlib.flow import Flow
