@@ -500,9 +500,19 @@ async function finish(summary) {
 
 // ---------------------------------------------------------------- 5. result
 
+function showDriveSaved(d) {
+  const p = $('#drive-saved');
+  p.hidden = !d;
+  if (!d) return;
+  p.replaceChildren(el('span', { class: 'badge drive' }, 'Saved to Google Drive'), ' ',
+    `${d.folder} › `, el('b', {}, d.name), ' ',
+    ...(d.url ? [el('a', { href: d.url, target: '_blank' }, 'Open in Drive')] : []));
+}
+
 function showResult(r, jobId, run = null) {
   $('#sec-result').hidden = false;
   $('#export-status').textContent = '';
+  showDriveSaved(r.drive_fcpxml);
   const flagged = r.segments.filter((s) => s.flag).length;
   $('#result-summary').replaceChildren(el('p', {},
     `${r.segments.length} clips, ${tc(r.duration)} long. `,
@@ -883,6 +893,7 @@ async function exportRun(runId) {
     reveal.hidden = !CONFIG.mac;
     reveal.onclick = () => api('/api/reveal', { method: 'POST', body: { path: detail.result.fcpxml } }).catch((e) => alert(e.message));
     status.textContent = ' ready: it points at this computer\'s copies of the takes.';
+    showDriveSaved(detail.result.drive_fcpxml);
     fcp.click();
   } catch (e) {
     status.replaceChildren(el('span', { class: 'error' }, ` ${e.message}`));

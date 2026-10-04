@@ -126,6 +126,9 @@ class GoogleDriveStore(Store):
         about = self._call(self._svc().about().get(fields="user(emailAddress,displayName)"))
         return about.get("user", {}).get("emailAddress")
 
+    def web_link(self, file_id):
+        return f"https://drive.google.com/file/d/{file_id}/view"
+
     def app_root(self):
         if self._root is None:
             self._root = self.ensure_folder(APP_FOLDER, "root")

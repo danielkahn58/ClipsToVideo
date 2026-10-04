@@ -5,6 +5,7 @@ In the store:
                       files/            screenplay PDF and video takes, as uploaded
                       transcripts/      <file>.words.json, so no computer transcribes twice
                       voice/            converted voice audio, so nothing is paid for twice
+                      timelines/        every FCPXML made, named with date and computer
                       runs/<run id>/    result.json, summary.json, log.txt, preview, fcpxml
 
 On each computer, files are downloaded on demand into a stable local folder
@@ -25,7 +26,7 @@ from .cloud.store import md5_file
 from .report import AutocutError, Reporter
 from .transcribe import cache_path
 
-SUBFOLDERS = ("files", "transcripts", "voice", "runs")
+SUBFOLDERS = ("files", "transcripts", "voice", "runs", "timelines")
 
 
 class Conflict(AutocutError):
@@ -201,6 +202,18 @@ class Project:
         self.store.write_json(folder, "summary.json", summary)
         return folder
 
+    def push_timeline(self, fcpxml, title):
+        """Save an FCPXML to the project's timelines/ folder as "<title> <date> (<computer>).fcpxml".
+        It points at this computer's copies of the media, hence the computer in the name."""
+        base = f"{_safe(title)} {time.strftime('%Y-%m-%d %H.%M.%S')} ({host_name()})"
+        taken = {i["name"] for i in self.store.list(self.sub("timelines"))}
+        name, n = f"{base}.fcpxml", 2
+        while name in taken:
+            name, n = f"{base} {n}.fcpxml", n + 1
+        item = self.store.upload(fcpxml, self.sub("timelines"), name)
+        return {"id": item["id"], "name": item["name"], "folder": f"Autocut › {self.name} › timelines",
+                "url": self.store.web_link(item["id"])}
+
     def list_runs(self):
         runs = []
         for f in self.store.list(self.sub("runs"), folders_only=True):
@@ -231,8 +244,13 @@ class Project:
         return dest
 
 
+def host_name():
+    """This computer's name, e.g. 'Daniels-MacBook-Pro' or 'DESKTOP-1234'."""
+    return socket.gethostname().removesuffix(".local") or "this computer"
+
+
 def run_summary(result, name, job_id):
-    return {"name": name, "created": time.time(), "host": socket.gethostname(),
+    return {"name": name, "created": time.time(), "host": host_name(),
             "clips": len(result["segments"]), "duration": result["duration"],
             "flagged": sum(1 for s in result["segments"] if s["flag"]), "job": job_id}
 

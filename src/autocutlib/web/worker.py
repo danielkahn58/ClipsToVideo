@@ -78,8 +78,11 @@ def run_cut(cfg, job_dir, rep):
         for t in result["takes"]:
             t["ref"] = refs.get(t["source"])
         result["project"] = {"id": proj.id, "name": proj.name}
-        (job_dir / "result.json").write_text(json.dumps(result, indent=1))
         rep.stage("Saving to Google Drive")
+        result["drive_fcpxml"] = proj.push_timeline(cfg["out"], cfg.get("name") or proj.name)
+        rep.log(f"Timeline saved to Google Drive: {result['drive_fcpxml']['folder']} › "
+                f"{result['drive_fcpxml']['name']}")
+        (job_dir / "result.json").write_text(json.dumps(result, indent=1))
         for t in result["takes"]:
             if t["ref"]:
                 proj.push_transcript(t["ref"], t["source"])
@@ -122,7 +125,11 @@ def run_export(cfg, job_dir, rep):
     rep.stage("Writing the timeline for this computer")
     export_from_result(result, files, cfg["out"], rep, opts)
     proj.push_voice()          # in case a voice had to be converted here
-    return {"fcpxml": str(Path(cfg["out"]).resolve()), "run": cfg["run_id"]}
+    rep.stage("Saving to Google Drive")
+    title = (proj.run_json(cfg["run_id"], "summary.json") or {}).get("name") or proj.name
+    drive = proj.push_timeline(cfg["out"], title)
+    rep.log(f"Timeline saved to Google Drive: {drive['folder']} › {drive['name']}")
+    return {"fcpxml": str(Path(cfg["out"]).resolve()), "run": cfg["run_id"], "drive_fcpxml": drive}
 
 
 def main():

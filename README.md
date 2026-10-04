@@ -208,6 +208,11 @@ The sign-in and the fal.ai key are stored per computer, in the workspace's `sett
   that cut uses, redoes any ProRes conversion and voice change locally (from the synced voice
   audio, so fal isn't charged again), and writes an FCPXML pointing at this computer's copies.
   Keep those files where they are for Resolve.
+- Every FCPXML is saved to **Autocut › <project> › timelines** as
+  `<name> <date time> (<computer>).fcpxml`, after each cut and each *Get FCPXML for this
+  computer*. The result panel links to it. The computer name matters: an FCPXML points at that
+  computer's copies of the takes, so in Resolve on another computer use *Get FCPXML for this
+  computer* instead of opening someone else's.
 - Not uploaded: ProRes conversions and voice-changed `.mov` files (big, and quick to rebuild).
 - The app can't see files you put in Drive yourself (on drive.google.com or with Drive for
   desktop); add takes through the app.

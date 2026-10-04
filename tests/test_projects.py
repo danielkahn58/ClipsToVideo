@@ -102,6 +102,12 @@ def test_two_computers(project, drive, tmp_path, monkeypatch):
     assert "claire.Aria.mov" in xml                 # voice re-applied from synced audio
     assert calls == [("Aria", 42)]
 
+    # Every FCPXML (both cuts and the export) is in the project's timelines/ folder.
+    timelines = [i["name"] for i in drive.list(b.sub("timelines"))]
+    assert len(timelines) == 3 and all(n.startswith("cut ") and n.endswith(".fcpxml") and ")" in n for n in timelines)
+    assert res_a["drive_fcpxml"]["folder"] == "Autocut › Kitchen › timelines"
+    assert res_a["drive_fcpxml"]["url"] is None          # LocalStore has no web link
+
     # The run's files are in Drive for every computer.
     runs = {r["id"]: r for r in b.list_runs()}
     assert set(runs) == {"job-a", "job-b"} and runs["job-a"]["clips"] == len(res_a["segments"])

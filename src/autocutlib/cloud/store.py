@@ -53,6 +53,10 @@ class Store:
     def account(self):
         return None
 
+    def web_link(self, file_id):
+        """A URL to open the file in the browser, if the store has one."""
+        return None
+
     # conveniences
     def read_json(self, parent, name):
         item = self.find(parent, name)
