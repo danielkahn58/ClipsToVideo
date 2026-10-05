@@ -64,6 +64,11 @@
       <label>Post padding (s) <input id="opt-post" type="number" step="0.05" min="0"></label>
       <label>Merge gap (s) <input id="opt-merge_gap" type="number" step="0.25" min="0"></label>
       <label>Output name <input id="opt-name" placeholder="from the script" spellcheck="false"></label>
+      <label title="One track per take lets you put a Resolve track effect (EQ, noise reduction, a look) on every clip of that take">Timeline layout
+        <select id="opt-layout">
+          <option value="tracks">One track per take</option>
+          <option value="stacked">Chosen clips on V1, others above</option>
+        </select></label>
     </div>
     <div class="checks">
       <label title="Cut every screenplay line separately, even when one character speaks several in a row">
@@ -148,6 +153,7 @@
         <th>Match</th><th>Alternates</th><th>Lines</th><th>Text</th></tr></thead>
       <tbody></tbody>
     </table></div>
+    <div id="tracks"></div>
     <div id="skipped"></div>
     <div id="converted"></div>
   </section>

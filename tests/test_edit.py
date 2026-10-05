@@ -98,12 +98,12 @@ def test_unfound_line_is_skipped():
     assert 2 not in [n for s in segs for n in s.lines]
 
 
-def fcp(tmp_path, enable_alts):
-    ls, takes, tr, sp = setup({**BASIC, ("MIKEY", 1): [2, 5, 8, 10, 14, 17]})
-    segs = build_segments(ls, takes, tr, sp, Options())
+def fcp(tmp_path, enable_alts, layout="stacked", opts=None, words=None):
+    ls, takes, tr, sp = setup({**BASIC, ("MIKEY", 1): [2, 5, 8, 10, 14, 17]}, words)
+    segs = build_segments(ls, takes, tr, sp, opts or Options())
     all_takes = [t for ts in takes.values() for t in ts]
     out = tmp_path / "cut.fcpxml"
-    write_fcpxml(segs, all_takes, out, "cut", enable_alts)
+    write_fcpxml(segs, all_takes, out, "cut", enable_alts, layout=layout)
     return segs, ET.parse(out).getroot()
 
 
@@ -136,3 +136,58 @@ def test_fcpxml_enable_alts(tmp_path):
     _, root = fcp(tmp_path, enable_alts=True)
     alts = root.findall(".//spine/asset-clip/asset-clip")
     assert alts and all(a.get("enabled") is None for a in alts)
+
+
+def slots(root):
+    """[(spine element, [(lane, take name, enabled, duration)])] - lane 0 = the spine item itself."""
+    names = {a.get("id"): a.get("name") for a in root.iter("asset")}
+    out = []
+    for el in root.find(".//spine"):
+        clips = []
+        if el.tag == "asset-clip":
+            clips.append((0, names[el.get("ref")], el.get("enabled") != "0", secs(el.get("duration"))))
+        for c in el.findall("asset-clip"):
+            clips.append((int(c.get("lane")), names[c.get("ref")], c.get("enabled") != "0",
+                          secs(c.get("duration"))))
+        out.append((el, clips))
+    return out
+
+
+def test_tracks_layout_one_track_per_take(tmp_path):
+    segs, root = fcp(tmp_path, enable_alts=False, layout="tracks")
+    lane_of = {"mikey1": 0, "mikey2": 1, "claire1": 2}     # grouped by character, takes in order
+    sl = slots(root)
+    assert len(sl) == len(segs)
+    pos = Fraction(0)
+    for (el, clips), s in zip(sl, segs):
+        assert secs(el.get("offset")) == pos
+        pos += secs(el.get("duration"))
+        for lane, name, _, _ in clips:
+            assert lane == lane_of[name]
+        enabled = [name for _, name, on, _ in clips if on]
+        assert enabled == [f"{s.character.lower()}{s.primary.take.index + 1}"]   # only the chosen take
+        if s.character == "CLAIRE":
+            assert el.tag == "gap"                                             # track 1 unused here
+    assert secs(root.find(".//sequence").get("duration")) == pos
+    mikey = sl[0][1]
+    assert [(lane, name, on) for lane, name, on, _ in mikey] == [(0, "mikey1", True), (1, "mikey2", False)]
+
+
+def test_tracks_layout_alternate_on_track_one(tmp_path):
+    # Main MIKEY take fluffs line 1, so pick-best puts take 2 on its track and take 1 becomes the
+    # (disabled) alternate on track 1, stretched to the line's length.
+    words = words_for([1, 4, 7, 9, 13, 16])
+    words[0]["word"] = "dud"
+    segs, root = fcp(tmp_path, enable_alts=False, layout="tracks", opts=Options(pick_best=True),
+                     words={("MIKEY", 0): words})
+    el, clips = slots(root)[0]
+    assert segs[0].primary.take.index == 1
+    assert el.tag == "asset-clip" and el.get("enabled") == "0"
+    by_lane = {lane: (name, on, dur) for lane, name, on, dur in clips}
+    assert by_lane[0][:2] == ("mikey1", False) and by_lane[1][:2] == ("mikey2", True)
+    assert by_lane[0][2] == by_lane[1][2] == secs(el.get("duration"))
+
+
+def test_tracks_layout_enable_alts(tmp_path):
+    _, root = fcp(tmp_path, enable_alts=True, layout="tracks")
+    assert all(on for _, clips in slots(root) for _, _, on, _ in clips)

@@ -37,6 +37,7 @@ class Options:
     voice_seed: int = DEFAULT_SEED  # same seed -> same rendition of the voice; change to vary it
     voice_stability: float = None   # 0..1; None = the voice's own default (ElevenLabs: usually 0.5)
     voice_cache_dir: str = None     # where converted voice audio is cached (None = user cache dir)
+    layout: str = "tracks"          # "tracks": one track per take; "stacked": V1 + alternates above
 
     @classmethod
     def from_dict(cls, d):
@@ -123,8 +124,10 @@ def run(script, videos, out, preview=None, opts=None, reporter=None):
     apply_voices(segs, takes, opts, rep)
 
     out = Path(out)
-    total = write_fcpxml(segs, all_takes, out, out.stem, opts.enable_alts, rep)
+    total = write_fcpxml(segs, all_takes, out, out.stem, opts.enable_alts, rep, opts.layout)
     rep.log(f"\nWrote {out}: {len(segs)} clips, {fmt_tc(total)} long.")
+    for line in track_list_text(all_takes, opts.layout):
+        rep.log(line)
     rep.log("In Resolve: File > Import > Timeline, then choose this file.")
 
     if preview:
@@ -159,6 +162,21 @@ def apply_voices(segs, takes, opts, rep):
             t.path, t.info, t.voice = paths[t.key], probe(paths[t.key]), voice
 
 
+def track_list(takes, layout):
+    if layout != "tracks":
+        return []
+    return [{"track": i + 1, "character": t.character, "take": t.index + 1, "file": Path(t.path).name}
+            for i, t in enumerate(takes)]
+
+
+def track_list_text(takes, layout):
+    rows = track_list(takes, layout)
+    if not rows:
+        return ["Tracks: chosen clips on V1/A1, other takes stacked above."]
+    return ["Tracks (one per take):"] + [
+        f"  V{r['track']}/A{r['track']}  {r['character']} take {r['take']}  ({r['file']})" for r in rows]
+
+
 def cut_table_text(segs):
     rows = [f"\n{'#':>3}  {'CHARACTER':<12} {'TAKE':>4} {'IN':>8} {'OUT':>8}  MATCH  LINE"]
     for n, s in enumerate(segs, 1):
@@ -180,6 +198,7 @@ def result_dict(segs, takes, lines, out, preview, total, opts):
         "duration": total,
         "low_match": LOW_MATCH,
         "options": asdict(opts),
+        "tracks": track_list(takes, opts.layout),
         "takes": [{"character": t.character, "take": t.index + 1, "source": str(t.source),
                    "path": str(t.path), "converted": t.path != t.source, "voice": t.voice,
                    "width": t.info["width"], "height": t.info["height"],
@@ -228,6 +247,8 @@ def export_from_result(result, take_files, out, reporter=None, opts=None):
     apply_voices(segs, by_char, opts, rep)
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    total = write_fcpxml(segs, all_takes, out, out.stem, opts.enable_alts, rep)
+    total = write_fcpxml(segs, all_takes, out, out.stem, opts.enable_alts, rep, opts.layout)
     rep.log(f"Wrote {out}: {len(segs)} clips, {fmt_tc(total)} long.")
+    for line in track_list_text(all_takes, opts.layout):
+        rep.log(line)
     return total

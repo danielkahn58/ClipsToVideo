@@ -330,6 +330,7 @@ const BOOL_OPTS = ['no_merge', 'pick_best', 'enable_alts', 'retranscribe', 'conv
 function fillOptions() {
   const o = (S.options = { ...CONFIG.defaults, ...S.options });
   $('#opt-model').value = o.model;
+  $('#opt-layout').value = o.layout || 'tracks';
   $('#opt-language').value = o.language;
   for (const k of NUM_OPTS) $(`#opt-${k}`).value = o[k];
   for (const k of BOOL_OPTS) $(`#opt-${k}`).checked = !!o[k];
@@ -361,6 +362,7 @@ function initOptions() {
     const o = S.options;
     o.model = $('#opt-model').value.trim() || d.model;
     o.language = $('#opt-language').value.trim() || d.language;
+    o.layout = $('#opt-layout').value;
     for (const k of NUM_OPTS) o[k] = parseFloat($(`#opt-${k}`).value) || 0;
     for (const k of BOOL_OPTS) o[k] = $(`#opt-${k}`).checked;
     S.preview = $('#opt-preview').checked;
@@ -566,6 +568,11 @@ function showResult(r, jobId, run = null) {
   $('#cut tbody').replaceChildren(...rows);
   applyFlagFilter();
 
+  $('#tracks').replaceChildren(...(r.tracks?.length ? [
+    el('h3', {}, 'Tracks in Resolve'),
+    el('p', { class: 'muted small' }, 'One video + audio track per take. Each line\'s chosen take is enabled; the other takes of that line sit disabled on their own tracks. A Fairlight track effect on a track applies to every clip of that take.'),
+    el('ul', { class: 'small' }, ...r.tracks.map((t) => el('li', {}, el('b', {}, `V${t.track} / A${t.track}`), ` ${t.character} take ${t.take} `, el('span', { class: 'muted' }, `(${t.file})`)))),
+  ] : []));
   $('#skipped').replaceChildren(...(r.skipped.length ? [
     el('h3', {}, `Skipped lines (${r.skipped.length})`),
     el('p', { class: 'muted small' }, "Not found in any take for that character, or that character has no take."),

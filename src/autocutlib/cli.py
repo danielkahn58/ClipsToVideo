@@ -55,6 +55,9 @@ def parse_args(argv=None):
                         "(default: always the main take)")
     p.add_argument("--enable-alts", action="store_true",
                    help="leave the stacked alternate takes enabled (default: disabled)")
+    p.add_argument("--layout", choices=["tracks", "stacked"], default="tracks",
+                   help="tracks: one video+audio track per take, grouped by character (default); "
+                        "stacked: chosen clips on V1/A1 with the other takes above")
     p.add_argument("--model", default="large-v3", help="Whisper model (large-v3, medium, small...)")
     p.add_argument("--language", default="en")
     p.add_argument("--retranscribe", action="store_true", help="ignore cached transcripts")
@@ -102,7 +105,7 @@ def main(argv=None):
 
         opts = Options(pages=args.pages, pre=args.pre, post=args.post, merge_gap=args.merge_gap,
                        no_merge=args.no_merge, pick_best=args.pick_best,
-                       enable_alts=args.enable_alts, model=args.model, language=args.language,
+                       enable_alts=args.enable_alts, layout=args.layout, model=args.model, language=args.language,
                        retranscribe=args.retranscribe, convert=not args.no_convert,
                        convert_dir=args.convert_dir, voices=voices,
                        voice_denoise=args.voice_denoise, voice_seed=args.voice_seed,

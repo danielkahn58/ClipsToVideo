@@ -116,6 +116,7 @@ python autocut.py --script scene.pdf --pages 3-4 \
 | `--pre` / `--post` | 0.20 / 0.30 | seconds of padding before / after each line (never more than halfway to the neighbouring line) |
 | `--merge-gap` | 3.0 | merge a character's consecutive lines into one clip if the gap is under this |
 | `--no-merge` | off | always cut per screenplay line |
+| `--layout` | tracks | `tracks`: one video+audio track per take, grouped by character; `stacked`: chosen clips on V1/A1, other takes above |
 | `--pick-best` | off | per clip, put whichever take matched the screenplay best on V1 (otherwise always the main take) |
 | `--enable-alts` | off | leave the stacked alternates enabled (by default they're disabled) |
 | `--model` | large-v3 | Whisper model: `large-v3`, `medium`, `small`, ... |
@@ -129,6 +130,17 @@ python autocut.py --script scene.pdf --pages 3-4 \
 | `--convert-dir` | next to original | where ProRes conversions go |
 
 ## How the timeline is built
+
+**Tracks (default layout "one track per take").** Every take gets its own video and audio track,
+a character's takes next to each other: e.g. V1/A1 MIKEY take 1, V2/A2 MIKEY take 2, V3/A3 CLAIRE
+take 1. Each line's chosen clip is enabled on its take's track; the same line from that
+character's other takes sits **disabled** on their tracks, directly above or below, so you can
+swap takes by enabling one and disabling the other. The track list is shown in the log and the
+result panel. Because a track only ever holds one take, a Resolve **track effect** covers every
+clip from that take: on the Fairlight page, click **+** in that track's Effects slot in the mixer
+(noise reduction, EQ, Dialogue Processor...). For shared color, see remote grades in Resolve.
+
+The older layout ("Chosen clips on V1, others above" / `--layout stacked`) works as described below.
 
 - **V1** has one clip per line. Consecutive lines by the same character are one clip,
   unless `--no-merge` is set or the gap is longer than `--merge-gap`. Merging is decided
