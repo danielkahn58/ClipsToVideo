@@ -30,6 +30,9 @@ def write_fcpxml(segs, takes, out_path, title, enable_alts=False, reporter=None,
                        main take, ...). Each line's chosen clip is enabled on its take's track; the
                        other takes of that line sit disabled on their own tracks.
             "stacked": every chosen clip on V1/A1, the other takes stacked on the lanes above it.
+            "nested":  one compound clip (timeline) per character, the length of the whole scene,
+                       with that character's lines at their scene timestamps (one track per take
+                       inside); the main timeline stacks the character timelines, one per track.
     """
     rep = reporter or Reporter()
     seq = takes[0].info
@@ -72,7 +75,11 @@ def write_fcpxml(segs, takes, out_path, title, enable_alts=False, reporter=None,
     def disabled(primary):
         return "" if primary or enable_alts else " enabled=" + quoteattr("0")
 
-    if layout == "tracks":
+    if layout == "nested":
+        clips, offset, media = _nested(segs, takes, ids, source_range, end_of, disabled, seq_fd,
+                                       ids[takes[0].key]["fmt"], rep)
+        res = res + media
+    elif layout == "tracks":
         clips, offset = _tracks_spine(segs, takes, ids, source_range, end_of, disabled, seq_fd, rep)
     else:
         clips, offset = _stacked_spine(segs, ids, source_range, enable_alts, seq_fd)
@@ -91,55 +98,117 @@ def _tracks_spine(segs, takes, ids, source_range, end_of, disabled, seq_fd, rep)
     track = {t.key: i for i, t in enumerate(takes)}
     clips, offset, dropped = [], Fraction(0), 0
     for n, s in enumerate(segs):
-        p_start, slot = source_range(s.primary)
-        note = f"{s.character}: {s.text}"[:240]
-        items = [(s.primary, True)] + [(a, False) for a in s.alts]
-        base = next(((c, prim) for c, prim in items if track[c.take.key] == 0), None)
-        parent_start = Fraction(0)
-        if base is not None:
-            c, prim = base
-            c_start = p_start if prim else source_range(c)[0]
-            if c_start + slot <= end_of(c.take):
-                parent_start = c_start
-            else:                    # an alternate too short to fill the slot on track 1
-                base, dropped = None, dropped + 1
-
-        children = []
-        for c, prim in items:
-            if base is not None and c is base[0]:
-                continue
-            if track[c.take.key] == 0:
-                continue             # dropped alternate (see above)
-            cid = ids[c.take.key]
-            c_start, c_dur = (p_start, slot) if prim else source_range(c)
-            marker = (f'>\n              <marker start="{ftime(c_start)}" duration="{ftime(seq_fd)}" '
-                      f'value={quoteattr(note)}/>\n            </asset-clip>') if prim else "/>"
-            # A connected clip's offset is in its parent's time: anchor it to the parent's start.
-            children.append(
-                f'            <asset-clip ref="{cid["asset"]}" lane="{track[c.take.key]}" '
-                f'name={quoteattr(_clip_name(n, s, c, prim))} offset="{ftime(parent_start)}" '
-                f'start="{ftime(c_start)}" duration="{ftime(c_dur)}" format="{cid["fmt"]}" '
-                f'tcFormat="{cid["tcfmt"]}"{disabled(prim)}{marker}')
-
-        if base is not None:
-            c, prim = base
-            cid = ids[c.take.key]
-            if prim:
-                children.append(f'            <marker start="{ftime(parent_start)}" '
-                                f'duration="{ftime(seq_fd)}" value={quoteattr(note)}/>')
-            clips.append(
-                f'          <asset-clip ref="{cid["asset"]}" name={quoteattr(_clip_name(n, s, c, prim))} '
-                f'offset="{ftime(offset)}" start="{ftime(parent_start)}" duration="{ftime(slot)}" '
-                f'format="{cid["fmt"]}" tcFormat="{cid["tcfmt"]}"{disabled(prim)}>\n'
-                + "\n".join(children) + '\n          </asset-clip>')
-        else:
-            clips.append(
-                f'          <gap name={quoteattr(f"{n + 1:03d}")} offset="{ftime(offset)}" start="0s" '
-                f'duration="{ftime(slot)}">\n' + "\n".join(children) + '\n          </gap>')
+        xml, slot, lost = _track_slot(n, s, offset, track, ids, source_range, end_of, disabled, seq_fd)
+        clips.append(xml)
+        dropped += lost
         offset += slot
+    _warn_dropped(dropped, rep)
+    return clips, offset
+
+
+def characters_in_order(takes):
+    out = []
+    for t in takes:
+        if t.character not in out:
+            out.append(t.character)
+    return out
+
+
+def _nested(segs, takes, ids, source_range, end_of, disabled, seq_fd, seq_fmt, rep):
+    """One <media> (compound clip) per character + the main spine of ref-clips stacking them."""
+    offsets, total = [], Fraction(0)
+    for s in segs:                                   # scene timestamps, as in the other layouts
+        offsets.append(total)
+        total += source_range(s.primary)[1]
+
+    chars = [c for c in characters_in_order(takes) if any(s.character == c for s in segs)]
+    media, refs, dropped = [], {}, 0
+    for k, char in enumerate(chars, 1):
+        char_takes = [t for t in takes if t.character == char]
+        track = {t.key: i for i, t in enumerate(char_takes)}
+        items, at = [], Fraction(0)
+        for n, s in enumerate(segs):
+            if s.character != char:
+                continue
+            if offsets[n] > at:                      # silence in this character's timeline
+                items.append(f'          <gap offset="{ftime(at)}" start="0s" duration="{ftime(offsets[n] - at)}"/>')
+            xml, slot, lost = _track_slot(n, s, offsets[n], track, ids, source_range, end_of, disabled, seq_fd)
+            items.append(xml)
+            dropped += lost
+            at = offsets[n] + slot
+        if total > at:
+            items.append(f'          <gap offset="{ftime(at)}" start="0s" duration="{ftime(total - at)}"/>')
+        refs[char] = f"c{k}"
+        media.append(
+            f'    <media id="c{k}" name={quoteattr(char)}>\n'
+            f'      <sequence format="{seq_fmt}" duration="{ftime(total)}" tcStart="0s" tcFormat="NDF" '
+            f'audioLayout="stereo" audioRate="48k">\n        <spine>\n'
+            + "\n".join(items) + '\n        </spine>\n      </sequence>\n    </media>')
+    _warn_dropped(dropped, rep)
+
+    # Main timeline: character 1's timeline on the spine, the others connected on lanes above it,
+    # all from 0 to the end. Only one character has a clip at any moment; the rest is empty.
+    children = [f'            <ref-clip ref="{refs[c]}" lane="{lane}" name={quoteattr(c)} offset="0s" '
+                f'start="0s" duration="{ftime(total)}"/>' for lane, c in enumerate(chars[1:], 1)]
+    children += [f'            <marker start="{ftime(offsets[n])}" duration="{ftime(seq_fd)}" '
+                 f'value={quoteattr(f"{s.character}: {s.text}"[:240])}/>' for n, s in enumerate(segs)]
+    spine = [f'          <ref-clip ref="{refs[chars[0]]}" name={quoteattr(chars[0])} offset="0s" '
+             f'start="0s" duration="{ftime(total)}">\n' + "\n".join(children) + '\n          </ref-clip>']
+    return spine, total, media
+
+
+def _warn_dropped(dropped, rep):
     if dropped:
         rep.warn(f"{dropped} alternate clip(s) on track 1 were too short to fill their slot and were left out.")
-    return clips, offset
+
+
+def _track_slot(n, s, offset, track, ids, source_range, end_of, disabled, seq_fd):
+    """One line at `offset`: the spine item for track 1 (its clip, or a gap) with the other tracks'
+    clips connected to it. Returns (xml, slot length, alternates dropped)."""
+    p_start, slot = source_range(s.primary)
+    note = f"{s.character}: {s.text}"[:240]
+    items = [(s.primary, True)] + [(a, False) for a in s.alts]
+    base = next(((c, prim) for c, prim in items if track[c.take.key] == 0), None)
+    parent_start, dropped = Fraction(0), 0
+    if base is not None:
+        c, prim = base
+        c_start = p_start if prim else source_range(c)[0]
+        if c_start + slot <= end_of(c.take):
+            parent_start = c_start
+        else:                    # an alternate too short to fill the slot on track 1
+            base, dropped = None, 1
+
+    children = []
+    for c, prim in items:
+        if base is not None and c is base[0]:
+            continue
+        if track[c.take.key] == 0:
+            continue             # dropped alternate (see above)
+        cid = ids[c.take.key]
+        c_start, c_dur = (p_start, slot) if prim else source_range(c)
+        marker = (f'>\n              <marker start="{ftime(c_start)}" duration="{ftime(seq_fd)}" '
+                  f'value={quoteattr(note)}/>\n            </asset-clip>') if prim else "/>"
+        # A connected clip's offset is in its parent's time: anchor it to the parent's start.
+        children.append(
+            f'            <asset-clip ref="{cid["asset"]}" lane="{track[c.take.key]}" '
+            f'name={quoteattr(_clip_name(n, s, c, prim))} offset="{ftime(parent_start)}" '
+            f'start="{ftime(c_start)}" duration="{ftime(c_dur)}" format="{cid["fmt"]}" '
+            f'tcFormat="{cid["tcfmt"]}"{disabled(prim)}{marker}')
+
+    if base is not None:
+        c, prim = base
+        cid = ids[c.take.key]
+        if prim:
+            children.append(f'            <marker start="{ftime(parent_start)}" '
+                            f'duration="{ftime(seq_fd)}" value={quoteattr(note)}/>')
+        xml = (f'          <asset-clip ref="{cid["asset"]}" name={quoteattr(_clip_name(n, s, c, prim))} '
+               f'offset="{ftime(offset)}" start="{ftime(parent_start)}" duration="{ftime(slot)}" '
+               f'format="{cid["fmt"]}" tcFormat="{cid["tcfmt"]}"{disabled(prim)}>\n'
+               + "\n".join(children) + '\n          </asset-clip>')
+    else:
+        xml = (f'          <gap name={quoteattr(f"{n + 1:03d}")} offset="{ftime(offset)}" start="0s" '
+               f'duration="{ftime(slot)}">\n' + "\n".join(children) + '\n          </gap>')
+    return xml, slot, dropped
 
 
 def _stacked_spine(segs, ids, source_range, enable_alts, seq_fd):

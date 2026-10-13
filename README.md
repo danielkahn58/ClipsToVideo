@@ -116,7 +116,7 @@ python autocut.py --script scene.pdf --pages 3-4 \
 | `--pre` / `--post` | 0.20 / 0.30 | seconds of padding before / after each line (never more than halfway to the neighbouring line) |
 | `--merge-gap` | 3.0 | merge a character's consecutive lines into one clip if the gap is under this |
 | `--no-merge` | off | always cut per screenplay line |
-| `--layout` | tracks | `tracks`: one video+audio track per take, grouped by character; `stacked`: chosen clips on V1/A1, other takes above |
+| `--layout` | tracks | `tracks`: one video+audio track per take, grouped by character; `nested`: one timeline per character, stacked in a main timeline; `stacked`: chosen clips on V1/A1, other takes above |
 | `--pick-best` | off | per clip, put whichever take matched the screenplay best on V1 (otherwise always the main take) |
 | `--enable-alts` | off | leave the stacked alternates enabled (by default they're disabled) |
 | `--model` | large-v3 | Whisper model: `large-v3`, `medium`, `small`, ... |
@@ -139,6 +139,16 @@ swap takes by enabling one and disabling the other. The track list is shown in t
 result panel. Because a track only ever holds one take, a Resolve **track effect** covers every
 clip from that take: on the Fairlight page, click **+** in that track's Effects slot in the mixer
 (noise reduction, EQ, Dialogue Processor...). For shared color, see remote grades in Resolve.
+
+**Per-character timelines + master** (`--layout nested`). Each character gets their own
+timeline, imported by Resolve as a compound clip in the Media Pool (named after the character).
+It's as long as the whole scene, with that character's lines at exactly their scene timestamps
+and nothing in between; inside, each of their takes has its own track, as above. The main
+timeline stacks the character timelines, one per track, all starting at 0, so only the
+character who is speaking shows at any moment. Change something once inside a character's
+timeline (right-click it › *Open in Timeline*: color, rotation, effects) and it applies to all of
+their clips; a Fairlight track effect on a character's track in the main timeline covers all of
+their audio. Line markers are on the main timeline too.
 
 The older layout ("Chosen clips on V1, others above" / `--layout stacked`) works as described below.
 

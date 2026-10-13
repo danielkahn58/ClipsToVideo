@@ -55,8 +55,9 @@ def parse_args(argv=None):
                         "(default: always the main take)")
     p.add_argument("--enable-alts", action="store_true",
                    help="leave the stacked alternate takes enabled (default: disabled)")
-    p.add_argument("--layout", choices=["tracks", "stacked"], default="tracks",
+    p.add_argument("--layout", choices=["tracks", "nested", "stacked"], default="tracks",
                    help="tracks: one video+audio track per take, grouped by character (default); "
+                        "nested: one timeline per character, stacked in a main timeline; "
                         "stacked: chosen clips on V1/A1 with the other takes above")
     p.add_argument("--model", default="large-v3", help="Whisper model (large-v3, medium, small...)")
     p.add_argument("--language", default="en")

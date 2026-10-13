@@ -568,7 +568,12 @@ function showResult(r, jobId, run = null) {
   $('#cut tbody').replaceChildren(...rows);
   applyFlagFilter();
 
-  $('#tracks').replaceChildren(...(r.tracks?.length ? [
+  $('#tracks').replaceChildren(...(r.timelines?.length ? [
+    el('h3', {}, 'Timelines in Resolve'),
+    el('p', { class: 'muted small' }, 'Each character has their own timeline (a compound clip in the Media Pool), as long as the whole scene, with their lines at the right times. The main timeline stacks them, one per track. Open a character\'s timeline to change something once for all of their clips; inside, each take has its own track (the chosen take enabled, others disabled).'),
+    el('ul', { class: 'small' }, ...r.timelines.map((t) => el('li', {}, el('b', {}, `Main V${t.track} / A${t.track}`), ` ${t.character} timeline `,
+      el('span', { class: 'muted' }, '(inside: ' + t.takes.map((k) => `V${k.track} take ${k.take}`).join(', ') + ')')))),
+  ] : r.tracks?.length ? [
     el('h3', {}, 'Tracks in Resolve'),
     el('p', { class: 'muted small' }, 'One video + audio track per take. Each line\'s chosen take is enabled; the other takes of that line sit disabled on their own tracks. A Fairlight track effect on a track applies to every clip of that take.'),
     el('ul', { class: 'small' }, ...r.tracks.map((t) => el('li', {}, el('b', {}, `V${t.track} / A${t.track}`), ` ${t.character} take ${t.take} `, el('span', { class: 'muted' }, `(${t.file})`)))),

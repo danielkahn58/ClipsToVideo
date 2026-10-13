@@ -191,3 +191,64 @@ def test_tracks_layout_alternate_on_track_one(tmp_path):
 def test_tracks_layout_enable_alts(tmp_path):
     _, root = fcp(tmp_path, enable_alts=True, layout="tracks")
     assert all(on for _, clips in slots(root) for _, _, on, _ in clips)
+
+
+def nested(tmp_path, **kw):
+    segs, root = fcp(tmp_path, enable_alts=False, layout="nested", **kw)
+    names = {a.get("id"): a.get("name") for a in root.iter("asset")}
+    media = {m.get("name"): m for m in root.iter("media")}
+    return segs, root, names, media
+
+
+def test_nested_character_timelines(tmp_path):
+    segs, root, names, media = nested(tmp_path)
+    total = secs(root.find("library//sequence").get("duration"))
+    assert set(media) == {"MIKEY", "CLAIRE"}
+
+    # Scene timestamps of each line: same as in the flat "tracks" layout.
+    (tmp_path / "flat").mkdir()
+    _, flat = fcp(tmp_path / "flat", enable_alts=False, layout="tracks")
+    offsets = [secs(el.get("offset")) for el in flat.find(".//spine")]
+
+    lane_in = {"MIKEY": {"mikey1": 0, "mikey2": 1}, "CLAIRE": {"claire1": 0}}
+    for char, m in media.items():
+        seq = m.find("sequence")
+        assert secs(seq.get("duration")) == total
+        items = list(seq.find("spine"))
+        pos = Fraction(0)
+        for it in items:                                    # back to back, covering 0..total
+            assert secs(it.get("offset")) == pos
+            pos += secs(it.get("duration"))
+        assert pos == total
+        lines = [n for n, s in enumerate(segs) if s.character == char]
+        line_items = [it for it in items if it.get("name") or it.tag == "asset-clip"]
+        assert [secs(it.get("offset")) for it in line_items] == [offsets[n] for n in lines]
+        for it in line_items:                               # takes on their own lanes, chosen enabled
+            clips = ([(0, names[it.get("ref")], it.get("enabled") != "0")] if it.tag == "asset-clip" else [])
+            clips += [(int(c.get("lane")), names[c.get("ref")], c.get("enabled") != "0")
+                      for c in it.findall("asset-clip")]
+            assert all(lane == lane_in[char][name] for lane, name, _ in clips)
+            assert sum(on for *_, on in clips) == 1
+
+    # Main timeline: one ref-clip per character, 0..total, stacked on lanes.
+    spine = list(root.find("library//sequence/spine"))
+    assert len(spine) == 1 and spine[0].tag == "ref-clip"
+    refs = [spine[0]] + spine[0].findall("ref-clip")
+    ids = {m.get("id"): name for name, m in media.items()}
+    assert [ids[r.get("ref")] for r in refs] == ["MIKEY", "CLAIRE"]
+    assert [r.get("lane") for r in refs] == [None, "1"]
+    assert all(secs(r.get("duration")) == total and r.get("offset") == "0s" for r in refs)
+    assert len(spine[0].findall("marker")) == len(segs)
+
+
+def test_nested_exactly_one_character_speaks(tmp_path):
+    segs, root, names, media = nested(tmp_path)
+    for n, s in enumerate(segs):
+        speaking = []
+        for char, m in media.items():
+            for it in m.find("sequence/spine"):
+                clips = [it] if it.tag == "asset-clip" else []
+                clips += it.findall("asset-clip")
+                if any(c.get("enabled") != "0" and f"{n + 1:03d} " in c.get("name") for c in clips):
+                    speaking.append(char)
+        assert speaking == [s.character]
