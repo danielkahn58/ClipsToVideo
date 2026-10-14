@@ -918,7 +918,13 @@ async function boot() {
   restore();
   CONFIG = await api('/api/config');
 
+  $('#version').textContent = `v${CONFIG.version}`;
+  $('#version').title = `Running from ${CONFIG.app_dir}`;
   const warn = [];
+  const pageVersion = document.querySelector('meta[name=autocut-version]')?.content;
+  if (pageVersion && pageVersion !== CONFIG.version) {
+    warn.push('The app was updated since this page was loaded: reload the page (Cmd+Shift+R on Mac, Ctrl+Shift+R on Windows).');
+  }
   if (!CONFIG.ffmpeg) warn.push(`ffmpeg/ffprobe not found on PATH. ${CONFIG.ffmpeg_install}`);
   if (!CONFIG.whisperx) warn.push('WhisperX is not installed, so only takes with cached .words.json transcripts will work. See the README (pip install -e ".[whisper]").');
   $('#env-warnings').replaceChildren(...warn.map((w) => el('div', { class: 'warning' }, w)));

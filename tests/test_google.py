@@ -101,3 +101,16 @@ def test_unexpected_errors_are_json(client, monkeypatch):
     monkeypatch.setenv("AUTOCUT_STORE", "local:" + str(_ / "drive"))
     r = c.get("/api/projects")
     assert r.status_code == 500 and "RuntimeError: disk on fire" in r.get_json()["error"]
+
+
+def test_page_and_scripts_are_never_stale(client):
+    from autocutlib import __version__
+    c, _ = client
+    page = c.get("/")
+    html = page.get_data(as_text=True)
+    assert page.headers["Cache-Control"] == "no-cache"
+    assert "/static/app.js?v=" in html and "/static/style.css?v=" in html
+    assert '<meta name="autocut-version"' in html
+    assert c.get("/static/app.js").headers["Cache-Control"] == "no-cache"
+    cfg = c.get("/api/config").get_json()
+    assert cfg["version"].startswith(__version__) and cfg["version"] in html

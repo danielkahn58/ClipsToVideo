@@ -37,6 +37,18 @@ from ..voice import preview as voice_preview
 from .worker import EVENT_MARK
 
 STATIC = Path(__file__).parent / "static"
+
+
+def app_version():
+    """Package version plus the checkout's git commit, e.g. "0.3.0 · 94e99ce"."""
+    from .. import __version__
+    try:
+        r = subprocess.run(["git", "-C", str(Path(__file__).resolve().parents[3]), "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=5)
+        commit = r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        commit = ""
+    return f"{__version__} · {commit}" if commit else __version__
 SRC_ROOT = Path(__file__).resolve().parents[2]       # .../src, for the worker's PYTHONPATH
 IS_MAC = sys.platform == "darwin"
 VIDEO_EXTS = {".mov", ".mp4", ".m4v", ".mxf", ".mpeg", ".mpg", ".m2v", ".vob", ".avi", ".mkv",
@@ -110,17 +122,29 @@ def create_app(home, port=8765):
         return p
 
     # ------------------------------------------------------------------ pages
+    # Always serve the current UI after an update: no stale cached page or scripts. The page carries
+    # the version it was served with, so it can tell when the server has been updated since.
+    version = app_version()
+    tag = re.sub(r"[^\w.]+", "-", version)
+
     @app.get("/")
     def index():
-        return send_from_directory(STATIC, "index.html")
+        html = (STATIC / "index.html").read_text(encoding="utf-8")
+        html = html.replace('/static/app.js"', f'/static/app.js?v={tag}"')
+        html = html.replace('/static/style.css"', f'/static/style.css?v={tag}"')
+        html = html.replace("<head>", f'<head>\n  <meta name="autocut-version" content="{version}">', 1)
+        return Response(html, mimetype="text/html", headers={"Cache-Control": "no-cache"})
 
     @app.get("/static/<path:name>")
     def static_file(name):
-        return send_from_directory(STATIC, name)
+        resp = send_from_directory(STATIC, name)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
 
     @app.get("/api/config")
     def config():
         return jsonify(
+            version=version, app_dir=str(Path(__file__).resolve().parents[3]),
             home=str(home), uploads=str(uploads_dir), converted=str(converted_dir),
             mac=IS_MAC, picker=IS_MAC and shutil.which("osascript") is not None,
             ffmpeg=shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None,
@@ -757,7 +781,8 @@ def main(argv=None):
 
     app = create_app(args.home, args.port)
     url = f"http://127.0.0.1:{args.port}"
-    print(f"autocut web UI: {url}   (workspace: {Path(args.home).expanduser()})\nCtrl-C to stop.")
+    print(f"autocut web UI {app_version()}: {url}\n  app folder: {Path(__file__).resolve().parents[3]}\n"
+          f"  workspace:  {Path(args.home).expanduser()}\nCtrl-C to stop.")
     if not args.no_browser:
         threading.Timer(1.0, webbrowser.open, [url]).start()
     app.run(host="127.0.0.1", port=args.port, threaded=True, debug=False)
