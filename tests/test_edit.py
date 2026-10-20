@@ -227,18 +227,25 @@ def test_nested_character_timelines(tmp_path):
             clips = ([(0, names[it.get("ref")], it.get("enabled") != "0")] if it.tag == "asset-clip" else [])
             clips += [(int(c.get("lane")), names[c.get("ref")], c.get("enabled") != "0")
                       for c in it.findall("asset-clip")]
-            assert all(lane == lane_in[char][name] for lane, name, _ in clips)
+            if char == "CLAIRE":                            # single take: + a disabled spare copy
+                assert [(lane, name, on) for lane, name, on in clips] == [(0, "claire1", True), (1, "claire1", False)]
+                spare = it.find("asset-clip")
+                assert (spare.get("start"), spare.get("duration")) == (it.get("start"), it.get("duration"))
+                assert "(spare)" in spare.get("name")
+            else:
+                assert all(lane == lane_in[char][name] for lane, name, _ in clips)
             assert sum(on for *_, on in clips) == 1
 
-    # Main timeline: one ref-clip per character, 0..total, stacked on lanes.
+    # Main timeline: one track, one ref-clip per line, cutting to the speaker's timeline at the
+    # line's scene time (start == offset), back to back.
     spine = list(root.find("library//sequence/spine"))
-    assert len(spine) == 1 and spine[0].tag == "ref-clip"
-    refs = [spine[0]] + spine[0].findall("ref-clip")
     ids = {m.get("id"): name for name, m in media.items()}
-    assert [ids[r.get("ref")] for r in refs] == ["MIKEY", "CLAIRE"]
-    assert [r.get("lane") for r in refs] == [None, "1"]
-    assert all(secs(r.get("duration")) == total and r.get("offset") == "0s" for r in refs)
-    assert len(spine[0].findall("marker")) == len(segs)
+    assert len(spine) == len(segs) and all(r.tag == "ref-clip" and r.get("lane") is None for r in spine)
+    assert [ids[r.get("ref")] for r in spine] == [s.character for s in segs]
+    assert [secs(r.get("offset")) for r in spine] == offsets
+    assert all(r.get("start") == r.get("offset") for r in spine)
+    assert sum(secs(r.get("duration")) for r in spine) == total
+    assert all(len(r.findall("marker")) == 1 for r in spine)
 
 
 def test_nested_exactly_one_character_speaks(tmp_path):

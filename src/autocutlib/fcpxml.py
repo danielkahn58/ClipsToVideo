@@ -115,7 +115,8 @@ def characters_in_order(takes):
 
 
 def _nested(segs, takes, ids, source_range, end_of, disabled, seq_fd, seq_fmt, rep):
-    """One <media> (compound clip) per character + the main spine of ref-clips stacking them."""
+    """One <media> (compound clip) per character + a main spine that cuts between them, one ref-clip
+    per line pointing at the speaker's timeline."""
     offsets, total = [], Fraction(0)
     for s in segs:                                   # scene timestamps, as in the other layouts
         offsets.append(total)
@@ -133,6 +134,17 @@ def _nested(segs, takes, ids, source_range, end_of, disabled, seq_fd, seq_fmt, r
             if offsets[n] > at:                      # silence in this character's timeline
                 items.append(f'          <gap offset="{ftime(at)}" start="0s" duration="{ftime(offsets[n] - at)}"/>')
             xml, slot, lost = _track_slot(n, s, offsets[n], track, ids, source_range, end_of, disabled, seq_fd)
+            if len(char_takes) == 1:
+                # Resolve collapses a compound clip that has one track of one file into a plain
+                # clip. A disabled spare copy on a second track (like a multi-take character's
+                # alternates) keeps it a timeline of its own. It never plays.
+                p_start, _ = source_range(s.primary)
+                cid = ids[s.primary.take.key]
+                spare = (f'            <asset-clip ref="{cid["asset"]}" lane="1" '
+                         f'name={quoteattr(f"{n + 1:03d} {s.character} t1 (spare)")} offset="{ftime(p_start)}" '
+                         f'start="{ftime(p_start)}" duration="{ftime(slot)}" format="{cid["fmt"]}" '
+                         f'tcFormat="{cid["tcfmt"]}" enabled="0"/>')
+                xml = xml.replace(">\n", ">\n" + spare + "\n", 1)
             items.append(xml)
             dropped += lost
             at = offsets[n] + slot
@@ -146,14 +158,16 @@ def _nested(segs, takes, ids, source_range, end_of, disabled, seq_fd, seq_fmt, r
             + "\n".join(items) + '\n        </spine>\n      </sequence>\n    </media>')
     _warn_dropped(dropped, rep)
 
-    # Main timeline: character 1's timeline on the spine, the others connected on lanes above it,
-    # all from 0 to the end. Only one character has a clip at any moment; the rest is empty.
-    children = [f'            <ref-clip ref="{refs[c]}" lane="{lane}" name={quoteattr(c)} offset="0s" '
-                f'start="0s" duration="{ftime(total)}"/>' for lane, c in enumerate(chars[1:], 1)]
-    children += [f'            <marker start="{ftime(offsets[n])}" duration="{ftime(seq_fd)}" '
-                 f'value={quoteattr(f"{s.character}: {s.text}"[:240])}/>' for n, s in enumerate(segs)]
-    spine = [f'          <ref-clip ref="{refs[chars[0]]}" name={quoteattr(chars[0])} offset="0s" '
-             f'start="0s" duration="{ftime(total)}">\n' + "\n".join(children) + '\n          </ref-clip>']
+    # Main timeline: one track that cuts to the speaker's timeline for each line. Character
+    # timelines hold each line at its scene time, so start = offset shows exactly that line.
+    spine = []
+    for n, s in enumerate(segs):
+        slot = source_range(s.primary)[1]
+        spine.append(
+            f'          <ref-clip ref="{refs[s.character]}" name={quoteattr(f"{n + 1:03d} {s.character}")} '
+            f'offset="{ftime(offsets[n])}" start="{ftime(offsets[n])}" duration="{ftime(slot)}">\n'
+            f'            <marker start="{ftime(offsets[n])}" duration="{ftime(seq_fd)}" '
+            f'value={quoteattr(f"{s.character}: {s.text}"[:240])}/>\n          </ref-clip>')
     return spine, total, media
 
 

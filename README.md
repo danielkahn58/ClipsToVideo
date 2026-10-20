@@ -143,12 +143,13 @@ clip from that take: on the Fairlight page, click **+** in that track's Effects 
 **Per-character timelines + master** (`--layout nested`). Each character gets their own
 timeline, imported by Resolve as a compound clip in the Media Pool (named after the character).
 It's as long as the whole scene, with that character's lines at exactly their scene timestamps
-and nothing in between; inside, each of their takes has its own track, as above. The main
-timeline stacks the character timelines, one per track, all starting at 0, so only the
-character who is speaking shows at any moment. Change something once inside a character's
-timeline (right-click it › *Open in Timeline*: color, rotation, effects) and it applies to all of
-their clips; a Fairlight track effect on a character's track in the main timeline covers all of
-their audio. Line markers are on the main timeline too.
+and nothing in between; inside, each of their takes has its own track, as above. (A character
+with only one take also gets a disabled spare copy on a second track; it never plays, it just
+stops Resolve from turning their timeline into a plain clip.) The main timeline is a single track
+that cuts to the timeline of whoever is speaking, line by line. Change something once inside a
+character's timeline (right-click it › *Open in Timeline*: color, rotation, effects; audio
+effects on its tracks on the Fairlight page) and it applies to all of their clips. Line markers
+are on the main timeline too.
 
 The older layout ("Chosen clips on V1, others above" / `--layout stacked`) works as described below.
 

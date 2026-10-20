@@ -171,25 +171,30 @@ def track_list(takes, layout):
 
 
 def timeline_list(takes, segs, layout):
-    """For the "nested" layout: main-timeline tracks, one per character timeline, and the take
-    tracks inside each."""
+    """For the "nested" layout: each character's timeline and the take tracks inside it (a
+    single-take character also gets a disabled spare copy, which keeps Resolve from flattening it)."""
     if layout != "nested":
         return []
     from .fcpxml import characters_in_order
     chars = [c for c in characters_in_order(takes) if any(s.character == c for s in segs)]
-    return [{"track": k, "character": c,
-             "takes": [{"track": i + 1, "take": t.index + 1, "file": Path(t.path).name}
-                       for i, t in enumerate(t for t in takes if t.character == c)]}
-            for k, c in enumerate(chars, 1)]
+    out = []
+    for k, c in enumerate(chars, 1):
+        own = [t for t in takes if t.character == c]
+        rows = [{"track": i + 1, "take": t.index + 1, "file": Path(t.path).name} for i, t in enumerate(own)]
+        if len(own) == 1:
+            rows.append({**rows[0], "track": 2, "spare": True})
+        out.append({"track": k, "character": c, "takes": rows})
+    return out
 
 
 def track_list_text(takes, layout, segs=()):
     if layout == "nested":
-        out = ["Timelines: one per character (compound clips), stacked in the main timeline:"]
+        out = ["Timelines: one per character (compound clips); the main timeline is one track that "
+               "cuts to whoever is speaking:"]
         for tl in timeline_list(takes, segs, layout):
-            out.append(f"  main V{tl['track']}/A{tl['track']}  {tl['character']} timeline")
-            out += [f"      inside: V{t['track']}/A{t['track']}  take {t['take']}  ({t['file']})"
-                    for t in tl["takes"]]
+            out.append(f"  {tl['character']} timeline")
+            out += [f"      V{t['track']}/A{t['track']}  take {t['take']}  ({t['file']})"
+                    + ("  spare copy, disabled" if t.get("spare") else "") for t in tl["takes"]]
         return out
     rows = track_list(takes, layout)
     if not rows:
